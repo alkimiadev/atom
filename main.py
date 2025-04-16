@@ -7,7 +7,8 @@ from typing import Dict, List, Any, Tuple
 from tqdm.asyncio import tqdm
 
 from experiment.dataset import load_data
-from experiment.module import set_module, atom, plugin
+from experiment.processor import AtomProcessor # Added
+# Removed set_module, atom, plugin from below import
 from experiment.utils import (
     duration_formatter,
     load_json,
@@ -63,11 +64,12 @@ class ExperimentRunner:
             
         self.config = DATASET_CONFIGS[dataset]
         set_model(model)
-    
+        self.processor = AtomProcessor() # Instantiate processor
+
     async def gather_results(self, testset: List[Dict[str, Any]]) -> List[Any]:
         # Collect experiment results
-        set_module(self.config.module_type)
-        
+        self.processor.configure_module(self.config.module_type) # Use processor method
+
         question_key = self.config.question_key
         tasks = []
         
@@ -76,16 +78,16 @@ class ExperimentRunner:
             # Handle case where question_key is a list
             if isinstance(question_key, list):
                 formatted_questions = [self._format_question_from_keys(item, question_key) for item in testset]
-                tasks = [atom(question, contexts(item, self.dataset)) 
+                tasks = [self.processor.atom(question, contexts(item, self.dataset)) # Use processor method
                          for question, item in zip(formatted_questions, testset)]
             else:
-                tasks = [atom(item[question_key], contexts(item, self.dataset)) for item in testset]
+                tasks = [self.processor.atom(item[question_key], contexts(item, self.dataset)) for item in testset] # Use processor method
         else:
             # Handle case where question_key is a list
             if isinstance(question_key, list):
-                tasks = [atom(self._format_question_from_keys(item, question_key)) for item in testset]
+                tasks = [self.processor.atom(self._format_question_from_keys(item, question_key)) for item in testset] # Use processor method
             else:
-                tasks = [atom(item[question_key]) for item in testset]
+                tasks = [self.processor.atom(item[question_key]) for item in testset] # Use processor method
 
         return await tqdm.gather(*tasks, desc=f"Processing {self.dataset} tasks")
     
@@ -181,11 +183,12 @@ async def optimize_dataset(dataset: str, model: str, start: int = 0, end: int = 
     print(f"Optimizing {dataset} dataset questions from index {start} to {end}")
     timestamp = time.time()
     
-    # Set model and module
+    # Set model and instantiate processor
     set_model(model)
+    processor = AtomProcessor() # Instantiate processor here
     config = DATASET_CONFIGS[dataset]
-    set_module(config.module_type)
-    
+    processor.configure_module(config.module_type) # Use processor method
+
     # Load test set
     testset = load_data(dataset, "test")[start:None if end == -1 else end]
     question_key = config.question_key
@@ -197,10 +200,10 @@ async def optimize_dataset(dataset: str, model: str, start: int = 0, end: int = 
         try:
             if config.requires_context():
                 from experiment.prompter.multihop import contexts
-                optimized_question = await plugin(item[question_key], contexts(item, dataset))
+                optimized_question = await processor.plugin(item[question_key], contexts(item, dataset)) # Use processor method
             else:
-                optimized_question = await plugin(item[question_key])
-                
+                optimized_question = await processor.plugin(item[question_key]) # Use processor method
+
             # Create new entry
             new_item = item.copy()
             new_item["original_question"] = item[question_key]
