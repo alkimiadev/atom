@@ -152,13 +152,30 @@ class AtomProcessor:
 			if 'contexts' not in kwargs:
 				raise Exception('Multi-hop must have contexts')
 			contexts = kwargs['contexts']
-			# self.multistep now returns a dictionary directly
-			multistep_result_dict = await self.multistep(question, contexts)
+			# self.multistep might return a string or a dict
+			multistep_output = await self.multistep(question, contexts)
 
-			# Basic validation that we got a dictionary
-			if not isinstance(multistep_result_dict, dict):
-				# TODO: Consider more robust error handling here.
-				raise TypeError(f"Expected a dictionary from self.multistep, but got {type(multistep_result_dict)}")
+			# --- Process Multistep Result (Handle String or Dict) ---
+			multistep_result_dict = None
+			raw_multistep_for_log = multistep_output # Keep original for logging if parsing fails
+			if isinstance(multistep_output, str):
+				try:
+					# Attempt to parse if it's a string
+					multistep_result_dict = json.loads(multistep_output)
+				except json.JSONDecodeError as e:
+					# TODO: Consider more robust error handling here.
+					raise ValueError(f"Failed to parse JSON from multistep: {e}\nRaw string: {raw_multistep_for_log}")
+			elif isinstance(multistep_output, dict):
+				# Use directly if it's already a dictionary
+				multistep_result_dict = multistep_output
+			else:
+				# Handle unexpected type
+				raise TypeError(f"Expected a string or dictionary from self.multistep, but got {type(multistep_output)}")
+
+			# Ensure we have a dictionary before proceeding
+			if not multistep_result_dict:
+				raise ValueError(f"Multistep processing resulted in None dictionary. Raw output: {raw_multistep_for_log}")
+
 
 			label_result = {}
 			while retries > 0:
