@@ -1,3 +1,4 @@
+import json
 from experiment.utils import check_json
 
 def cot(question: str, contexts: str = None):
@@ -194,13 +195,31 @@ def label(question: str, result: dict):
             "thought": "Give your thought process here",
             "sub-questions": [
 '''
-    for i, sub_q in enumerate(result["sub-questions"]):
-        formatter += f'''                {{"description": "{sub_q["description"]}", "answer": "{sub_q["answer"]}", "supporting_sentences": {sub_q["supporting_sentences"]}, "depend": [<indices of the dependent sub-questions>, ...]}}'''
-        if i != len(result["sub-questions"]) - 1:
-            formatter += ",\n"
-        else:
-            formatter += "\n            ]\n        }"
-    
+    formatted_sub_qs = []
+    if isinstance(result.get("sub-questions"), list): # Ensure sub-questions is a list
+    	for sub_q in result["sub-questions"]:
+    		# Check if sub_q is a dictionary before accessing keys
+    		if isinstance(sub_q, dict):
+    			# Safely get values, providing defaults if keys are missing
+    			desc = sub_q.get("description", "N/A")
+    			ans = sub_q.get("answer", "N/A")
+    			sup_sent = sub_q.get("supporting_sentences", [])
+    			# Format supporting sentences as a JSON list string
+    			sup_sent_str = json.dumps(sup_sent)
+    			
+    			formatted_sub_qs.append(
+    				f'''				{{"description": "{desc}", "answer": "{ans}", "supporting_sentences": {sup_sent_str}, "depend": [<indices of the dependent sub-questions>, ...]}}'''
+    			)
+    		else:
+    			# Optionally log a warning or skip invalid entries
+    			print(f"Warning: Skipping invalid sub-question item (not a dict): {sub_q}")
+    			pass
+   
+    # Join the valid formatted sub-questions with commas
+    formatter += ",\n".join(formatted_sub_qs)
+    formatter += "\n			]\n		}"
+   
+    # Need to import json at the top of the file for json.dumps
     return instruction + formatter
 
 def contract(question: str, decompose_result: dict, independent: list, dependent: list, contexts: str = None):
