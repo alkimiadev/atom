@@ -49,7 +49,7 @@ async def gen(msg, model=None, temperature=None, response_format="json_object"):
                         ],
                         temperature=temperature,
                         stop=None,
-                        max_tokens=8192,
+                        #max_tokens=8192,
                         response_format={"type": response_format}
                     )
                 content = response.choices[0].message.content
