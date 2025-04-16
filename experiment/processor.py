@@ -318,12 +318,12 @@ class AtomProcessor:
 
 
 		# --- Step 3: Separate sub-questions and perform Merging (Contraction) ---
-		independent_subqs = [sub_q for sub_q in decompose_result['sub-questions'] if not sub_q.get('depend')]
-		dependent_subqs = [sub_q for sub_q in decompose_result['sub-questions'] if sub_q.get('depend')]
+		independent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if not sub_q.get('depend')]
+		dependent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if sub_q.get('depend')]
 
 		merging_args = {
 			'question': question,
-			'decompose_result': decompose_result,
+			'decompose_result': decompose_result_dict, # Use the processed dictionary
 			'independent_subqs': independent_subqs,
 			'dependent_subqs': dependent_subqs
 		}
