@@ -197,22 +197,40 @@ def label(question: str, result: dict):
 '''
     formatted_sub_qs = []
     if isinstance(result.get("sub-questions"), list): # Ensure sub-questions is a list
-    	for sub_q in result["sub-questions"]:
-    		# Check if sub_q is a dictionary before accessing keys
-    		if isinstance(sub_q, dict):
+    	for sub_q_item in result["sub-questions"]:
+    		sub_q_dict = None
+    		# Check if it's already a dictionary
+    		if isinstance(sub_q_item, dict):
+    			sub_q_dict = sub_q_item
+    		# If it's a string, try to parse it as JSON
+    		elif isinstance(sub_q_item, str):
+    			try:
+    				sub_q_dict = json.loads(sub_q_item)
+    				# Ensure the parsed result is actually a dictionary
+    				if not isinstance(sub_q_dict, dict):
+    					print(f"Warning: Parsed sub-question string but did not get a dict: {sub_q_item}")
+    					sub_q_dict = None # Reset if parsing didn't yield a dict
+    			except json.JSONDecodeError:
+    				print(f"Warning: Failed to parse sub-question string as JSON: {sub_q_item}")
+    				sub_q_dict = None # Parsing failed
+   
+    		# Process if we successfully obtained a dictionary
+    		if sub_q_dict:
     			# Safely get values, providing defaults if keys are missing
-    			desc = sub_q.get("description", "N/A")
-    			ans = sub_q.get("answer", "N/A")
-    			sup_sent = sub_q.get("supporting_sentences", [])
+    			desc = sub_q_dict.get("description", "N/A")
+    			ans = sub_q_dict.get("answer", "N/A")
+    			sup_sent = sub_q_dict.get("supporting_sentences", [])
     			# Format supporting sentences as a JSON list string
     			sup_sent_str = json.dumps(sup_sent)
-    			
+   
     			formatted_sub_qs.append(
     				f'''				{{"description": "{desc}", "answer": "{ans}", "supporting_sentences": {sup_sent_str}, "depend": [<indices of the dependent sub-questions>, ...]}}'''
     			)
     		else:
-    			# Optionally log a warning or skip invalid entries
-    			print(f"Warning: Skipping invalid sub-question item (not a dict): {sub_q}")
+    			# Log a warning if the item was neither a dict nor a valid JSON string dict
+    			if not isinstance(sub_q_item, dict) and not isinstance(sub_q_item, str):
+    				print(f"Warning: Skipping invalid sub-question item (type {type(sub_q_item)}): {sub_q_item}")
+    			# The warnings for failed parsing or wrong parsed type are handled above
     			pass
    
     # Join the valid formatted sub-questions with commas
