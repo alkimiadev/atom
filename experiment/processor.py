@@ -152,15 +152,13 @@ class AtomProcessor:
 			if 'contexts' not in kwargs:
 				raise Exception('Multi-hop must have contexts')
 			contexts = kwargs['contexts']
-			multistep_result_str = await self.multistep(question, contexts)
-			
-			# --- Parse Multistep Result ---
-			try:
-				multistep_result_dict = json.loads(multistep_result_str)
-			except json.JSONDecodeError as e:
-				# Log the error and raise? Or return an error dict? Let's raise for now.
+			# self.multistep now returns a dictionary directly
+			multistep_result_dict = await self.multistep(question, contexts)
+
+			# Basic validation that we got a dictionary
+			if not isinstance(multistep_result_dict, dict):
 				# TODO: Consider more robust error handling here.
-				raise ValueError(f"Failed to parse JSON from multistep: {e}\nRaw string: {multistep_result_str}")
+				raise TypeError(f"Expected a dictionary from self.multistep, but got {type(multistep_result_dict)}")
 
 			label_result = {}
 			while retries > 0:
