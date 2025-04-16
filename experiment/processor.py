@@ -1,4 +1,5 @@
 import asyncio
+import json
 from functools import wraps
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
@@ -151,16 +152,26 @@ class AtomProcessor:
 			if 'contexts' not in kwargs:
 				raise Exception('Multi-hop must have contexts')
 			contexts = kwargs['contexts']
-			multistep_result = await self.multistep(question, contexts)
+			multistep_result_str = await self.multistep(question, contexts)
+			
+			# --- Parse Multistep Result ---
+			try:
+				multistep_result_dict = json.loads(multistep_result_str)
+			except json.JSONDecodeError as e:
+				# Log the error and raise? Or return an error dict? Let's raise for now.
+				# TODO: Consider more robust error handling here.
+				raise ValueError(f"Failed to parse JSON from multistep: {e}\nRaw string: {multistep_result_str}")
+
 			label_result = {}
 			while retries > 0:
-				# Pass the dictionary directly to label for multi-hop
-				label_result = await self.label(question, multistep_result)
+				# Pass the PARSED dictionary to label for multi-hop
+				label_result = await self.label(question, multistep_result_dict)
 				try:
 					# Check if lengths match before accessing keys
-					if 'sub-questions' not in label_result or 'sub-questions' not in multistep_result:
-						raise ValueError("Missing 'sub-questions' key in results")
-					if len(label_result.get('sub-questions', [])) != len(multistep_result.get('sub-questions', [])):
+					# Ensure label_result is also a dict (though label should return one)
+					if not isinstance(label_result, dict) or 'sub-questions' not in label_result or 'sub-questions' not in multistep_result_dict:
+						raise ValueError("Missing 'sub-questions' key in results or label_result is not a dict")
+					if len(label_result.get('sub-questions', [])) != len(multistep_result_dict.get('sub-questions', [])):
 						retries -= 1
 						continue
 					calculate_depth(label_result['sub-questions']) # Check dependencies are valid
@@ -177,10 +188,10 @@ class AtomProcessor:
 					continue
 
 			# Combine results if successful
-			if 'sub-questions' in label_result and 'sub-questions' in multistep_result:
-				for step, note in zip(multistep_result['sub-questions'], label_result['sub-questions']):
+			if 'sub-questions' in label_result and 'sub-questions' in multistep_result_dict:
+				for step, note in zip(multistep_result_dict['sub-questions'], label_result['sub-questions']):
 					step['depend'] = note.get('depend', []) # Use .get for safety
-			return multistep_result
+			return multistep_result_dict
 
 		else: # Math or Multi-choice
 			multistep_result = await self.multistep(question)
@@ -246,12 +257,28 @@ class AtomProcessor:
 		direct_result = direct_result if direct_result else await self.direct(*direct_args)
 
 		decompose_args = {'contexts': contexts} if self.module_name == 'multi-hop' else {}
-		decompose_result = decompose_result if decompose_result else await self.decompose(question, **decompose_args)
+		decompose_result_str = decompose_result if decompose_result else await self.decompose(question, **decompose_args)
 
-		# Handle potential failure in decompose
-		if not decompose_result or 'sub-questions' not in decompose_result:
-			log[index].update({'error': 'Decomposition failed', 'direct': direct_result})
-			# Return direct result if decompose fails
+		# --- Parse Decompose Result ---
+		decompose_result_dict = None
+		if decompose_result_str:
+			try:
+				# Attempt to parse the JSON string from the LLM
+				decompose_result_dict = json.loads(decompose_result_str)
+			except json.JSONDecodeError as e:
+				log[index].update({'error': f'JSON parsing failed for decompose result: {e}', 'raw_decompose': decompose_result_str, 'direct': direct_result})
+				# Fallback to direct result if JSON is invalid
+				final_result = {
+					'method': 'direct_fallback',
+					'response': direct_result.get('response'),
+					'answer': direct_result.get('answer'),
+				}
+				return final_result, log
+
+		# Handle potential failure in decompose or missing 'sub-questions' key after parsing
+		if not decompose_result_dict or 'sub-questions' not in decompose_result_dict:
+			log[index].update({'error': 'Decomposition failed or missing sub-questions', 'raw_decompose': decompose_result_str, 'parsed_decompose': decompose_result_dict, 'direct': direct_result})
+			# Return direct result if decompose fails or structure is wrong
 			final_result = {
 				'method': 'direct_fallback',
 				'response': direct_result.get('response'),
@@ -261,9 +288,9 @@ class AtomProcessor:
 
 		# --- Step 2: Set recursion depth ---
 		try:
-			current_depth = calculate_depth(decompose_result['sub-questions'])
+			current_depth = calculate_depth(decompose_result_dict['sub-questions'])
 		except Exception as e:
-			log[index].update({'error': f'Depth calculation failed: {e}', 'direct': direct_result, 'decompose': decompose_result})
+			log[index].update({'error': f'Depth calculation failed: {e}', 'direct': direct_result, 'decompose': decompose_result_dict})
 			# Return direct result if depth calculation fails
 			final_result = {
 				'method': 'direct_fallback',
