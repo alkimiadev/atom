@@ -72,7 +72,8 @@ class AtomProcessor:
 
 	# --- Decorator and Context Manager ---
 
-	def retry(self, func_name):
+	@staticmethod
+	def retry(func_name):
 		'''Decorator to retry LLM calls with checks.'''
 		def decorator(func):
 			@wraps(func)
