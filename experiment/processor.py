@@ -255,16 +255,18 @@ class AtomProcessor:
 		direct_result = direct_result if direct_result else await self.direct(*direct_args)
 
 		decompose_args = {'contexts': contexts} if self.module_name == 'multi-hop' else {}
-		decompose_result_str = decompose_result if decompose_result else await self.decompose(question, **decompose_args)
+		# self.decompose might return a string or a dict
+		decompose_output = decompose_result if decompose_result else await self.decompose(question, **decompose_args)
 
-		# --- Parse Decompose Result ---
+		# --- Process Decompose Result (Handle String or Dict) ---
 		decompose_result_dict = None
-		if decompose_result_str:
+		raw_decompose_for_log = decompose_output # Keep original for logging if parsing fails
+		if isinstance(decompose_output, str):
 			try:
-				# Attempt to parse the JSON string from the LLM
-				decompose_result_dict = json.loads(decompose_result_str)
+				# Attempt to parse if it's a string
+				decompose_result_dict = json.loads(decompose_output)
 			except json.JSONDecodeError as e:
-				log[index].update({'error': f'JSON parsing failed for decompose result: {e}', 'raw_decompose': decompose_result_str, 'direct': direct_result})
+				log[index].update({'error': f'JSON parsing failed for decompose result: {e}', 'raw_decompose': raw_decompose_for_log, 'direct': direct_result})
 				# Fallback to direct result if JSON is invalid
 				final_result = {
 					'method': 'direct_fallback',
@@ -272,10 +274,23 @@ class AtomProcessor:
 					'answer': direct_result.get('answer'),
 				}
 				return final_result, log
+		elif isinstance(decompose_output, dict):
+			# Use directly if it's already a dictionary
+			decompose_result_dict = decompose_output
+		else:
+			# Handle unexpected type
+			log[index].update({'error': f'Unexpected type from decompose: {type(decompose_output)}', 'raw_decompose': raw_decompose_for_log, 'direct': direct_result})
+			final_result = {
+				'method': 'direct_fallback',
+				'response': direct_result.get('response'),
+				'answer': direct_result.get('answer'),
+			}
+			return final_result, log
 
-		# Handle potential failure in decompose or missing 'sub-questions' key after parsing
+
+		# Handle potential failure in decompose or missing 'sub-questions' key after processing
 		if not decompose_result_dict or 'sub-questions' not in decompose_result_dict:
-			log[index].update({'error': 'Decomposition failed or missing sub-questions', 'raw_decompose': decompose_result_str, 'parsed_decompose': decompose_result_dict, 'direct': direct_result})
+			log[index].update({'error': 'Decomposition failed or missing sub-questions', 'raw_decompose': raw_decompose_for_log, 'parsed_decompose': decompose_result_dict, 'direct': direct_result})
 			# Return direct result if decompose fails or structure is wrong
 			final_result = {
 				'method': 'direct_fallback',
