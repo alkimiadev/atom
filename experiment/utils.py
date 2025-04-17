@@ -19,10 +19,16 @@ def extract_json(string):
         json_data = json.loads(string)
         logger.debug(f"Successfully extracted JSON: {json_data}") # Log success
         return json_data
+    except json.JSONDecodeError as e:
+    	# Log specific JSON decode errors, including position if available
+    	logger.error(f"Failed to decode JSON: {e} at char {e.pos}", exc_info=True)
+    	logger.debug(f"Original string causing JSON decode error: {string}") # Log original string on error
+    	return None # Return None on JSON failure
     except Exception as e:
-        logger.error(f"Failed to extract JSON: {e}", exc_info=True) # Log error
-        logger.debug(f"Original string causing JSON error: {string}") # Log original string on error
-        return str(e)
+    	# Catch other potential exceptions during extraction
+    	logger.error(f"Failed during JSON extraction (not JSONDecodeError): {e}", exc_info=True)
+    	logger.debug(f"Original string causing other extraction error: {string}") # Log original string on error
+    	return None # Return None on other failures
 
 def extract_xml(string):
     logger.debug(f"Attempting to extract XML from string (length {len(string)}): {string[:200]}...") # Log input (truncated)
@@ -102,9 +108,6 @@ def calculate_depth(sub_questions: list):
             # Distance to self is 0
             distances[i][i] = 0
             # Set direct dependencies with distance 1
-            # --- DEBUG LOGGING START ---
-            logger.info(f"calculate_depth: Processing sub_q at index {i}. Type: {type(sub_q)}, Content: {sub_q}")
-            # --- DEBUG LOGGING END ---
             for dep in sub_q.get("depend", []):
             	distances[dep][i] = 1
 

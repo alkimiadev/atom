@@ -183,32 +183,42 @@ class AtomProcessor:
 
 			# --- Process Multistep Result (Handle String or Dict) ---
 			multistep_result_dict = None
-			raw_multistep_for_log = multistep_output # Keep original for logging if parsing fails
-			if isinstance(multistep_output, str):
+			# Keep original (as string) for logging if parsing fails. Handle potential non-string types.
+			raw_multistep_for_log = str(multistep_output) if multistep_output is not None else "None"
+
+			if isinstance(multistep_output, dict):
+				# Use directly if it's already a dictionary
+				logger.debug("Multistep output is already a dict.")
+				multistep_result_dict = multistep_output
+			elif isinstance(multistep_output, str):
 				try:
 					# Attempt to parse if it's a string
 					logger.debug("Attempting to parse multistep string output as JSON.")
 					multistep_result_dict = json.loads(multistep_output)
 					logger.debug("Successfully parsed multistep JSON string.")
 				except json.JSONDecodeError as e:
-					logger.error(f"Failed to parse JSON from multistep output: {e}", exc_info=True)
+					# Log error but don't raise here. Let the check below handle the None result.
+					logger.error(f"Failed to parse JSON from multistep string output: {e}", exc_info=False) # exc_info=False to avoid duplicate traceback
 					logger.debug(f"Raw string causing multistep JSON error: {raw_multistep_for_log}")
-					# TODO: Consider more robust error handling here. Maybe return an error dict?
-					raise ValueError(f"Failed to parse JSON from multistep: {e}\nRaw string: {raw_multistep_for_log}")
-			elif isinstance(multistep_output, dict):
-				# Use directly if it's already a dictionary
-				logger.debug("Multistep output is already a dict.")
-				multistep_result_dict = multistep_output
+					# multistep_result_dict remains None
 			else:
-				# Handle unexpected type
-				logger.error(f"Unexpected type from self.multistep: {type(multistep_output)}")
-				raise TypeError(f"Expected a string or dictionary from self.multistep, but got {type(multistep_output)}")
+				# Handle unexpected types (including None if extract_json returned it)
+				logger.warning(f"Unexpected type or None received from self.multistep: {type(multistep_output)}. Treating as failure.")
+				# multistep_result_dict remains None
 
-			# Ensure we have a dictionary before proceeding
-			if not multistep_result_dict:
-				logger.error(f"Multistep processing resulted in None dictionary. Raw output: {raw_multistep_for_log}")
-				raise ValueError(f"Multistep processing resulted in None dictionary. Raw output: {raw_multistep_for_log}")
+			# --- Check if a valid dictionary was obtained ---
+			if multistep_result_dict is None:
+				logger.error(f"Multistep processing failed to produce a valid dictionary. Raw output (truncated): {raw_multistep_for_log[:500]}")
+				raise ValueError(f"Multistep processing failed to produce a valid dictionary. See logs. Raw output (truncated): {raw_multistep_for_log[:200]}")
+
+			# --- Ensure the obtained dictionary has the required keys ---
+			if 'sub-questions' not in multistep_result_dict:
+			    logger.error(f"Decomposition result is missing 'sub-questions' key. Result: {multistep_result_dict}")
+			    raise ValueError("Decomposition result missing 'sub-questions' key.")
+
 			logger.debug(f"Processed multistep result (dict): {multistep_result_dict}")
+			# Assign to the final variable name used later in the function
+			decompose_result_dict = multistep_result_dict
 
 
 			label_result = {}
@@ -431,10 +441,6 @@ class AtomProcessor:
 
 		# --- Step 3: Separate sub-questions and perform Merging (Contraction) ---
 		logger.debug(f"Atom (level {index}): Step 3 - Separating sub-questions and merging.")
-		# --- DEBUG LOGGING START ---
-		logger.info(f"Atom (level {index}): Type of decompose_result_dict['sub-questions']: {type(decompose_result_dict.get('sub-questions'))}")
-		logger.info(f"Atom (level {index}): Content of decompose_result_dict['sub-questions']: {decompose_result_dict.get('sub-questions')}")
-		# --- DEBUG LOGGING END ---
 		independent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if not sub_q.get('depend')]
 		dependent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if sub_q.get('depend')]
 		logger.debug(f"Atom (level {index}): Separated sub-questions. Independent: {len(independent_subqs)}, Dependent: {len(dependent_subqs)}")
