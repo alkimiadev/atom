@@ -213,8 +213,8 @@ class AtomProcessor:
 
 			# --- Ensure the obtained dictionary has the required keys ---
 			if 'sub-questions' not in multistep_result_dict:
-			    logger.error(f"Decomposition result is missing 'sub-questions' key. Result: {multistep_result_dict}")
-			    raise ValueError("Decomposition result missing 'sub-questions' key.")
+				logger.error(f"Decomposition result is missing 'sub-questions' key. Result: {multistep_result_dict}")
+				raise ValueError("Decomposition result missing 'sub-questions' key.")
 
 			logger.debug(f"Processed multistep result (dict): {multistep_result_dict}")
 			# Assign to the final variable name used later in the function
