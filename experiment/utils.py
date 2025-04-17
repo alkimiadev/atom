@@ -96,60 +96,60 @@ def duration_formatter(seconds):
 		return f"{int(seconds):02d}s"
 
 def calculate_depth(sub_questions: list):
-	   logger.debug(f"Calculating depth for {len(sub_questions)} sub-questions. Input (first 500 chars): {str(sub_questions)[:500]}") # Log input
-	   try:
-		   n = len(sub_questions)
-   
-		   # Initialize distances matrix with infinity
-		   distances = [[float("inf")] * n for _ in range(n)]
-   
-		   # Set direct dependencies
-		   for i, sub_q in enumerate(sub_questions):
-			   logger.debug(f"calculate_depth: Processing sub_q #{i}: Type={type(sub_q)}, Value={str(sub_q)[:200]}") # Log sub_q
-			   # Distance to self is 0
-			   distances[i][i] = 0
-			   # Set direct dependencies with distance 1
-			   # Check if sub_q is a dictionary before calling .get()
-			   if isinstance(sub_q, dict):
-				   dependencies = sub_q.get("depend", [])
-				   logger.debug(f"calculate_depth: Sub_q #{i} dependencies: {dependencies}") # Log dependencies
-				   for dep in dependencies:
-					   logger.debug(f"calculate_depth: Processing dependency 'dep': Type={type(dep)}, Value={dep}") # Log dep
-					   # Check if dep is an integer before comparison
-					   if isinstance(dep, int):
-						   # Add check for dependency index bounds
-						   if dep >= n:
-							   logger.error(f"Invalid dependency index in calculate_depth: sub_question index i={i}, dependency index dep={dep}, but n={n}. Skipping this dependency.")
-							   continue # Skip this invalid dependency
-						   distances[dep][i] = 1
-					   else:
-						   logger.warning(f"calculate_depth: Dependency 'dep' for sub_q #{i} is not an integer (Type: {type(dep)}, Value: {dep}). Skipping.")
-			   else:
-				   logger.warning(f"calculate_depth: Sub_q #{i} is not a dictionary. Skipping dependency processing for this item.")
-   
-   
-		   # Floyd-Warshall algorithm to find shortest paths
-		   for k in range(n):
-			   for i in range(n):
-				   for j in range(n):
-					   if distances[i][k] != float("inf") and distances[k][j] != float("inf"):
-						   distances[i][j] = min(
-							   distances[i][j], distances[i][k] + distances[k][j]
-						   )
-   
-		   # Find maximum finite distance
-		   max_depth = 0
-		   for i in range(n):
-			   for j in range(n):
-				   if distances[i][j] != float("inf"):
-					   max_depth = max(max_depth, distances[i][j])
-   
-		   logger.debug(f"Calculated max depth: {max_depth}")
-		   return int(max_depth)
-	   except Exception as e:
-		   logger.error(f"Failed to calculate depth: {e}", exc_info=True)
-					logger.warning("Returning default depth of 3 due to calculation error.")
-					return 3
+	logger.debug(f"Calculating depth for {len(sub_questions)} sub-questions. Input (first 500 chars): {str(sub_questions)[:500]}") # Log input
+	try:
+		n = len(sub_questions)
+
+		# Initialize distances matrix with infinity
+		distances = [[float("inf")] * n for _ in range(n)]
+
+		# Set direct dependencies
+		for i, sub_q in enumerate(sub_questions):
+			logger.debug(f"calculate_depth: Processing sub_q #{i}: Type={type(sub_q)}, Value={str(sub_q)[:200]}") # Log sub_q
+			# Distance to self is 0
+			distances[i][i] = 0
+			# Set direct dependencies with distance 1
+			# Check if sub_q is a dictionary before calling .get()
+			if isinstance(sub_q, dict):
+				dependencies = sub_q.get("depend", [])
+				logger.debug(f"calculate_depth: Sub_q #{i} dependencies: {dependencies}") # Log dependencies
+				for dep in dependencies:
+					logger.debug(f"calculate_depth: Processing dependency 'dep': Type={type(dep)}, Value={dep}") # Log dep
+					# Check if dep is an integer before comparison
+					if isinstance(dep, int):
+						# Add check for dependency index bounds
+						if dep >= n:
+							logger.error(f"Invalid dependency index in calculate_depth: sub_question index i={i}, dependency index dep={dep}, but n={n}. Skipping this dependency.")
+							continue # Skip this invalid dependency
+						distances[dep][i] = 1
+					else:
+						logger.warning(f"calculate_depth: Dependency 'dep' for sub_q #{i} is not an integer (Type: {type(dep)}, Value: {dep}). Skipping.")
+			else:
+				logger.warning(f"calculate_depth: Sub_q #{i} is not a dictionary. Skipping dependency processing for this item.")
+
+
+		# Floyd-Warshall algorithm to find shortest paths
+		for k in range(n):
+			for i in range(n):
+				for j in range(n):
+					if distances[i][k] != float("inf") and distances[k][j] != float("inf"):
+						distances[i][j] = min(
+							distances[i][j], distances[i][k] + distances[k][j]
+						)
+
+		# Find maximum finite distance
+		max_depth = 0
+		for i in range(n):
+			for j in range(n):
+				if distances[i][j] != float("inf"):
+					max_depth = max(max_depth, distances[i][j])
+
+		logger.debug(f"Calculated max depth: {max_depth}")
+		return int(max_depth)
+	except Exception as e:
+		logger.error(f"Failed to calculate depth: {e}", exc_info=True)
+		logger.warning("Returning default depth of 3 due to calculation error.")
+		return 3
 def get_next_log_file(log_dir, size, dataset):
 	directory = log_dir.format(dataset=dataset, size=size)
 	os.makedirs(directory, exist_ok=True)
