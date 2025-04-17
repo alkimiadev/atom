@@ -16,13 +16,18 @@ def extract_json(string):
 		start, end = string.find("{"), string.rfind("}")
 		if start != -1 and end != -1:
 			string = string[start : end + 1]
-		json_data = json.loads(string)
-		logger.debug(f"Successfully extracted JSON: {json_data}") # Log success
+		# Attempt to remove common control characters before parsing
+		# Allow tabs (\t), newlines (\n), carriage returns (\r)
+		cleaned_string = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', string)
+		json_data = json.loads(cleaned_string)
+		logger.debug(f"Successfully extracted JSON from cleaned string: {json_data}") # Log success
 		return json_data
 	except json.JSONDecodeError as e:
 		# Log specific JSON decode errors, including position if available
 		logger.error(f"Failed to decode JSON: {e} at char {e.pos}", exc_info=True)
-		logger.debug(f"Original string causing JSON decode error: {string}") # Log original string on error
+		# Log original string AND cleaned string on error for comparison
+		logger.debug(f"Original string causing JSON decode error: {string}")
+		logger.debug(f"Cleaned string causing JSON decode error: {cleaned_string}")
 		return None # Return None on JSON failure
 	except Exception as e:
 		# Catch other potential exceptions during extraction
