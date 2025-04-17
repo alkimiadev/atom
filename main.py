@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import argparse
+import logging # Added import
 from dataclasses import dataclass
 from typing import Dict, List, Any, Tuple
 from tqdm.asyncio import tqdm
