@@ -262,7 +262,10 @@ class AtomProcessor:
 			# Combine results if successful
 			logger.debug("Combining multistep and label results for multi-hop.")
 			if 'sub-questions' in label_result and 'sub-questions' in multistep_result_dict:
-				for step, note in zip(multistep_result_dict['sub-questions'], label_result['sub-questions']):
+				for i, (step, note) in enumerate(zip(multistep_result_dict['sub-questions'], label_result['sub-questions'])):
+					# --- DEBUG LOGGING ---
+					logger.debug(f"Processing zipped item #{i}: Type(note)={type(note)}, Value(note)='{str(note)[:100]}...'")
+					# --- END DEBUG LOGGING ---
 					step['depend'] = note.get('depend', []) # Use .get for safety
 			logger.debug(f"Final multi-hop decompose result: {multistep_result_dict}")
 			return multistep_result_dict
