@@ -283,16 +283,3 @@ def score_mc(prediction, target):
     score = 1 if normalize_answer(prediction) == normalize_answer(target) else 0
     logger.debug(f"MC Score: {score}")
     return score
-                1
-                if eval_math(prediction) == eval_math(extract_boxed(groundtruth))
-                else 0
-            )
-        elif dataset == "gsm8k":
-            return (
-                1
-                if eval_math(prediction) == eval_math(groundtruth.split("####")[1])
-                else 0
-            )
-        elif dataset == "aime":
-            return 1 if eval_math(prediction) == eval_math(groundtruth) else 0
-# Removed original score_math except block and score_mc function as they are replaced above
