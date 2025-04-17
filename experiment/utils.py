@@ -19,20 +19,39 @@ def extract_json(string):
 		# Attempt to remove common control characters before parsing
 		# Allow tabs (\t), newlines (\n), carriage returns (\r)
 		cleaned_string = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', string)
-		json_data = json.loads(cleaned_string)
-		logger.debug(f"Successfully extracted JSON from cleaned string: {json_data}") # Log success
-		return json_data
-	except json.JSONDecodeError as e:
-		# Log specific JSON decode errors, including position if available
-		logger.error(f"Failed to decode JSON: {e} at char {e.pos}", exc_info=True)
-		# Log original string AND cleaned string on error for comparison
-		logger.debug(f"Original string causing JSON decode error: {string}")
-		logger.debug(f"Cleaned string causing JSON decode error: {cleaned_string}")
-		return None # Return None on JSON failure
+		# --- Attempt basic JSON auto-fixing ---
+		fixed_string = cleaned_string
+		# Heuristic: Add comma between } and " or } and { or ] and { or ] and "
+		fixed_string = re.sub(r'}(?=\s*")', '},', fixed_string)
+		fixed_string = re.sub(r'}(?=\s*{)', '},', fixed_string)
+		fixed_string = re.sub(r'](?=\s*{)', '],', fixed_string)
+		fixed_string = re.sub(r'](?=\s*")', '],', fixed_string)
+		# --- End auto-fixing attempt ---
+		try:
+			# Try parsing the potentially fixed string first
+			logger.debug(f"Attempting JSON load on potentially fixed string (first 200 chars): {fixed_string[:200]}...")
+			json_data = json.loads(fixed_string)
+			logger.debug(f"Successfully extracted JSON from potentially fixed string.") # Log success
+			return json_data
+		except json.JSONDecodeError as e_fix:
+			logger.warning(f"JSON parsing failed after attempting fixes: {e_fix}. Trying original cleaned string.")
+			# Fallback to original cleaned string if fix fails or introduces new errors
+			try:
+				json_data = json.loads(cleaned_string)
+				logger.debug(f"Successfully extracted JSON from original cleaned string.") # Log success
+				return json_data
+			except json.JSONDecodeError as e_orig:
+				# Log specific JSON decode errors, including position if available
+				logger.error(f"Failed to decode JSON even on original cleaned string: {e_orig} at char {e_orig.pos}", exc_info=False) # exc_info=False to avoid duplicate traceback
+				# Log original raw string, cleaned string, AND fixed string on final error for comparison
+				logger.debug(f"Original RAW string causing JSON decode error: {string}")
+				logger.debug(f"Cleaned string causing JSON decode error: {cleaned_string}")
+				logger.debug(f"Auto-fixed string causing JSON decode error: {fixed_string}")
+				return None # Return None on JSON failure
 	except Exception as e:
 		# Catch other potential exceptions during extraction
 		logger.error(f"Failed during JSON extraction (not JSONDecodeError): {e}", exc_info=True)
-		logger.debug(f"Original string causing other extraction error: {string}") # Log original string on error
+		logger.debug(f"Original RAW string causing other extraction error: {string}") # Log original raw string on error
 		return None # Return None on other failures
 
 def extract_xml(string):
