@@ -431,6 +431,10 @@ class AtomProcessor:
 
 		# --- Step 3: Separate sub-questions and perform Merging (Contraction) ---
 		logger.debug(f"Atom (level {index}): Step 3 - Separating sub-questions and merging.")
+		# --- DEBUG LOGGING START ---
+		logger.info(f"Atom (level {index}): Type of decompose_result_dict['sub-questions']: {type(decompose_result_dict.get('sub-questions'))}")
+		logger.info(f"Atom (level {index}): Content of decompose_result_dict['sub-questions']: {decompose_result_dict.get('sub-questions')}")
+		# --- DEBUG LOGGING END ---
 		independent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if not sub_q.get('depend')]
 		dependent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if sub_q.get('depend')]
 		logger.debug(f"Atom (level {index}): Separated sub-questions. Independent: {len(independent_subqs)}, Dependent: {len(dependent_subqs)}")

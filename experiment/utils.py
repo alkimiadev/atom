@@ -102,8 +102,11 @@ def calculate_depth(sub_questions: list):
             # Distance to self is 0
             distances[i][i] = 0
             # Set direct dependencies with distance 1
+            # --- DEBUG LOGGING START ---
+            logger.info(f"calculate_depth: Processing sub_q at index {i}. Type: {type(sub_q)}, Content: {sub_q}")
+            # --- DEBUG LOGGING END ---
             for dep in sub_q.get("depend", []):
-                distances[dep][i] = 1
+            	distances[dep][i] = 1
 
         # Floyd-Warshall algorithm to find shortest paths
         for k in range(n):
