@@ -109,7 +109,11 @@ def calculate_depth(sub_questions: list):
             distances[i][i] = 0
             # Set direct dependencies with distance 1
             for dep in sub_q.get("depend", []):
-            	distances[dep][i] = 1
+                # Add check for dependency index bounds
+                if dep >= n:
+                    logger.error(f"Invalid dependency index in calculate_depth: sub_question index i={i}, dependency index dep={dep}, but n={n}. Skipping this dependency.")
+                    continue # Skip this invalid dependency
+                distances[dep][i] = 1
 
         # Floyd-Warshall algorithm to find shortest paths
         for k in range(n):
