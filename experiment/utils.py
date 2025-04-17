@@ -3,21 +3,29 @@ import os
 import json
 import re
 import string
+import logging # Add logging import
 from collections import Counter
 from typing import List, Union
 
+logger = logging.getLogger(__name__) # Add logger for this module
+
 def extract_json(string):
+    logger.debug(f"Attempting to extract JSON from string (length {len(string)}): {string[:200]}...") # Log input (truncated)
     try:
         string = string.strip()
         start, end = string.find("{"), string.rfind("}")
         if start != -1 and end != -1:
             string = string[start : end + 1]
         json_data = json.loads(string)
+        logger.debug(f"Successfully extracted JSON: {json_data}") # Log success
         return json_data
     except Exception as e:
+        logger.error(f"Failed to extract JSON: {e}", exc_info=True) # Log error
+        logger.debug(f"Original string causing JSON error: {string}") # Log original string on error
         return str(e)
 
 def extract_xml(string):
+    logger.debug(f"Attempting to extract XML from string (length {len(string)}): {string[:200]}...") # Log input (truncated)
     try:
         # Remove any leading/trailing whitespace
         string = string.strip()
@@ -45,8 +53,11 @@ def extract_xml(string):
             # Simply update the value, overwriting any previous value
             result[tag] = value
 
+        logger.debug(f"Successfully extracted XML: {result}") # Log success
         return result
     except Exception as e:
+        logger.error(f"Failed to extract XML: {e}", exc_info=True) # Log error
+        logger.debug(f"Original string causing XML error: {string}") # Log original string on error
         return {}
 
 def check_json(json_obj, keys: list):
@@ -79,6 +90,7 @@ def duration_formatter(seconds):
         return f"{int(seconds):02d}s"
 
 def calculate_depth(sub_questions: list):
+    logger.debug(f"Calculating depth for {len(sub_questions)} sub-questions.")
     try:
         n = len(sub_questions)
 
@@ -109,8 +121,11 @@ def calculate_depth(sub_questions: list):
                 if distances[i][j] != float("inf"):
                     max_depth = max(max_depth, distances[i][j])
 
+        logger.debug(f"Calculated max depth: {max_depth}")
         return int(max_depth)
-    except:
+    except Exception as e:
+        logger.error(f"Failed to calculate depth: {e}", exc_info=True)
+        logger.warning("Returning default depth of 3 due to calculation error.")
         return 3
 
 def get_next_log_file(log_dir, size, dataset):
@@ -197,13 +212,16 @@ def f1_score(prediction, ground_truth):
 
 
 def score_mh(prediction: str, groundtruth: Union[str, list]):
+    logger.debug(f"Scoring MH: Prediction='{prediction}', Groundtruth='{groundtruth}'")
     try:
         if isinstance(groundtruth, list):
             f1 = max([f1_score(prediction, gt)[0] for gt in groundtruth])
         else:
             f1 = f1_score(prediction, groundtruth)[0]
+        logger.debug(f"MH Score (F1): {f1}")
         return f1
-    except:
+    except Exception as e:
+        logger.error(f"Failed to score MH: Prediction='{prediction}', Groundtruth='{groundtruth}', Error: {e}", exc_info=True)
         return 0
 
 # math
@@ -225,9 +243,46 @@ def eval_math(s):
 
 
 def score_math(prediction, groundtruth, dataset="aime"):
+    logger.debug(f"Scoring Math ({dataset}): Prediction='{prediction}', Groundtruth='{groundtruth}'")
     try:
+        score = 0 # Default score
+        pred_eval = eval_math(prediction)
         if dataset == "math":
-            return (
+            gt_eval = eval_math(extract_boxed(groundtruth))
+            score = 1 if pred_eval == gt_eval else 0
+        elif dataset == "gsm8k":
+            gt_eval = eval_math(groundtruth.split("####")[1])
+            score = 1 if pred_eval == gt_eval else 0
+        elif dataset == "aime":
+            gt_eval = eval_math(groundtruth)
+            score = 1 if pred_eval == gt_eval else 0
+        else:
+             logger.warning(f"Unknown dataset type for math scoring: {dataset}")
+
+        logger.debug(f"Math Score: {score}")
+        return score
+    except Exception as e:
+        logger.error(f"Failed to score Math ({dataset}): Prediction='{prediction}', Groundtruth='{groundtruth}', Error: {e}", exc_info=True)
+        return 0
+
+
+# logic
+def score_mc(prediction, target):
+    logger.debug(f"Scoring MC: Prediction='{prediction}', Target='{target}'")
+    if not prediction or not target:
+        logger.debug("MC Score: 0 (Missing prediction or target)")
+        return 0
+
+    prediction = str(prediction).upper()
+    target = str(target).upper()
+
+    def normalize_answer(answer):
+        # Remove any brackets and convert to uppercase
+        return answer.replace("(", "").replace(")", "").upper()
+
+    score = 1 if normalize_answer(prediction) == normalize_answer(target) else 0
+    logger.debug(f"MC Score: {score}")
+    return score
                 1
                 if eval_math(prediction) == eval_math(extract_boxed(groundtruth))
                 else 0
@@ -240,20 +295,4 @@ def score_math(prediction, groundtruth, dataset="aime"):
             )
         elif dataset == "aime":
             return 1 if eval_math(prediction) == eval_math(groundtruth) else 0
-    except:
-        return 0
-
-
-# logic
-def score_mc(prediction, target):
-    if not prediction or not target:
-        return 0
-
-    prediction = str(prediction).upper()
-    target = str(target).upper()
-
-    def normalize_answer(answer):
-        # Remove any brackets and convert to uppercase
-        return answer.replace("(", "").replace(")", "").upper()
-
-    return 1 if normalize_answer(prediction) == normalize_answer(target) else 0
+# Removed original score_math except block and score_mc function as they are replaced above
