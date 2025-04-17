@@ -441,8 +441,33 @@ class AtomProcessor:
 
 		# --- Step 3: Separate sub-questions and perform Merging (Contraction) ---
 		logger.debug(f"Atom (level {index}): Step 3 - Separating sub-questions and merging.")
-		independent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if not sub_q.get('depend')]
-		dependent_subqs = [sub_q for sub_q in decompose_result_dict['sub-questions'] if sub_q.get('depend')]
+		# --- Log the sub-questions list before processing ---
+		sub_questions_list = decompose_result_dict.get('sub-questions', []) # Use .get for safety
+		logger.debug(f"Atom (level {index}): Sub-questions list type: {type(sub_questions_list)}, Content (first 500 chars): {str(sub_questions_list)[:500]}")
+
+		# --- Process sub-questions with logging ---
+		independent_subqs = []
+		dependent_subqs = []
+		if isinstance(sub_questions_list, list):
+			for i, sub_q in enumerate(sub_questions_list):
+				logger.debug(f"Atom (level {index}): Processing sub_q #{i}: Type={type(sub_q)}, Value={str(sub_q)[:200]}")
+				try:
+					# Check if it's a dictionary before calling .get()
+					if isinstance(sub_q, dict):
+						if not sub_q.get('depend'):
+							independent_subqs.append(sub_q)
+						else:
+							dependent_subqs.append(sub_q)
+					else:
+						logger.warning(f"Atom (level {index}): Sub_q #{i} is not a dictionary, skipping dependency check.")
+						# Decide how to handle non-dict items. Maybe add to independent? Or skip?
+						# For now, let's skip adding it to either list if it's not a dict.
+				except Exception as e:
+					logger.error(f"Atom (level {index}): Error processing sub_q #{i}: {e}", exc_info=True)
+		else:
+			logger.error(f"Atom (level {index}): 'sub-questions' is not a list, cannot separate.")
+
+
 		logger.debug(f"Atom (level {index}): Separated sub-questions. Independent: {len(independent_subqs)}, Dependent: {len(dependent_subqs)}")
 
 		merging_args = {
