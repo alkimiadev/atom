@@ -148,9 +148,8 @@ def calculate_depth(sub_questions: list):
            return int(max_depth)
        except Exception as e:
            logger.error(f"Failed to calculate depth: {e}", exc_info=True)
-           logger.warning("Returning default depth of 3 due to calculation error.")
-        return 3
-
+                    logger.warning("Returning default depth of 3 due to calculation error.")
+                    return 3
 def get_next_log_file(log_dir, size, dataset):
     directory = log_dir.format(dataset=dataset, size=size)
     os.makedirs(directory, exist_ok=True)
