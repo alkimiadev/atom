@@ -18,7 +18,7 @@ from experiment.utils import (
 	get_next_log_file,
 	get_file_count,
 )
-from llm import get_token, get_call_count, set_model
+from llm import LLMManager # Import the class
 
 # Configuration constants
 LOG_DIR = "log/{dataset}/{size}"
@@ -95,9 +95,11 @@ class ExperimentRunner:
 			raise ValueError(f"Unsupported dataset: {dataset}")
 
 		self.config = DATASET_CONFIGS[dataset]
+		self.llm_manager = LLMManager() # Instantiate LLMManager
 		logger.info(f"Setting LLM model to: {model}") # Log model setting
-		set_model(model)
-		self.processor = AtomProcessor() # Instantiate processor
+		self.llm_manager.set_model(model) # Use manager method
+		# Pass the llm_manager to the processor (requires AtomProcessor update)
+		self.processor = AtomProcessor(llm_manager=self.llm_manager)
 
 	async def gather_results(self, testset: List[Dict[str, Any]]) -> List[Any]:
 		# Collect experiment results
@@ -172,8 +174,9 @@ class ExperimentRunner:
 		log_entry = {
 			"start": self.start,
 			"end": self.end,
-			"token": {"prompt": get_token()[0], "completion": get_token()[1]},
-			"call_count": get_call_count(),
+			# Use manager methods for stats
+			"token": {"prompt": self.llm_manager.get_token()[0], "completion": self.llm_manager.get_token()[1]},
+			"call_count": self.llm_manager.get_call_count(),
 			"accuracy": accuracy,
 		}
 		
@@ -251,10 +254,12 @@ async def optimize_dataset(dataset: str, model: str, start: int = 0, end: int = 
 	print(f"Optimizing {dataset} dataset questions from index {start} to {end}") # Keep print
 	timestamp = time.time()
 	
-	# Set model and instantiate processor
+	# Instantiate LLMManager and set model
+	llm_manager = LLMManager()
 	logger.info(f"Setting LLM model to: {model}")
-	set_model(model)
-	processor = AtomProcessor() # Instantiate processor here
+	llm_manager.set_model(model) # Use manager method
+	# Pass the llm_manager to the processor (requires AtomProcessor update)
+	processor = AtomProcessor(llm_manager=llm_manager)
 	config = DATASET_CONFIGS[dataset]
 	logger.info(f"Configuring AtomProcessor for module: {config.module_type}")
 	processor.configure_module(config.module_type) # Use processor method

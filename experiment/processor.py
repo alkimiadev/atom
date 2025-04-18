@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 import logging # Add logging import
 
-# LLM interaction
-from llm import gen
+# LLM interaction (LLMManager will be passed in)
+# from llm import gen # Removed global import
 
 # Prompters for different modules
 from experiment.prompter import math, multichoice, multihop
@@ -28,16 +28,22 @@ class AtomProcessor:
 	Encapsulates the core logic for Atom of Thoughts processing (atom, plugin modes).
 	Manages state like module type, prompter, scoring function, and retry counts.
 	'''
-	def __init__(self, max_retries: int = 5, label_retries: int = 3, atom_depth: int = 3):
+	# Modified __init__ to accept llm_manager
+	def __init__(self, llm_manager, max_retries: int = 5, label_retries: int = 3, atom_depth: int = 3):
 		'''
 		Initializes the AtomProcessor.
 
 		Args:
+			llm_manager: An instance of LLMManager from llm.py.
 			max_retries: Default maximum retries for decorated functions.
 			label_retries: Specific retry count for the labeling step in decompose.
 			atom_depth: Default recursion depth for the atom method.
 		'''
-		logger.info(f"Initializing AtomProcessor: max_retries={max_retries}, label_retries={label_retries}, atom_depth={atom_depth}")
+		if llm_manager is None:
+			raise ValueError("llm_manager cannot be None")
+		self.llm_manager = llm_manager # Store the LLMManager instance
+		logger.info(f"Initializing AtomProcessor with LLMManager: max_retries={max_retries}, label_retries={label_retries}, atom_depth={atom_depth}")
+
 		self.module_name: Optional[str] = None
 		self.prompter: Optional[Any] = None  # Module for specific prompter functions
 		self.score_func: Optional[callable] = None # Function for scoring results
@@ -110,8 +116,8 @@ class AtomProcessor:
 						if func_name != 'label':
 							response_format = 'text'
 
-					# Call LLM
-					response = await gen(prompt, response_format=response_format)
+					# Call LLM using the instance's llm_manager
+					response = await instance.llm_manager.gen(prompt, response_format=response_format)
 					logger.debug(f"Retry wrapper for '{func_name}': Raw response received (type: {type(response)}): {str(response)[:200]}...")
 
 					# Extract result based on format
