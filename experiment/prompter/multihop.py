@@ -1,5 +1,5 @@
 import json
-from experiment.utils import check_json
+import logging # Add logging
 
 def cot(question: str, contexts: str = None):
 	instruction = """
@@ -12,12 +12,12 @@ def cot(question: str, contexts: str = None):
 		{contexts}
 	"""
 	formatter = """
-		
-		Provide your response in this JSON format:
-		{{
-			"thought": "Give your step-by-step reasoning process",
-			"answer": "Your precise answer"
-		}}
+
+		Provide your response using the following XML structure:
+		<response>
+		  <thought>Give your step-by-step reasoning process</thought>
+		  <answer>Your precise answer</answer>
+		</response>
 	"""
 	prompt = (instruction + formatter).format(question=question, contexts=contexts)
 	return prompt
@@ -81,18 +81,19 @@ def direct(question: str, contexts: str = None):
 	"""
 	
 	formatter = """
-	Provide your response in this JSON format:
-	{{
-		"question": {question},
-		"thought": "give your step by step thought process here",
-		"supporting_sentences": [
-			"Include ALL sentences needed to justify your answer",
-			"Use ... for long sentences when appropriate"
-		],
-		"answer": "Your precise answer following the instructions above" or "none" if no answer can be found
-	}}
+	Provide your response using the following XML structure:
+	<response>
+	  <question>{question}</question>
+	  <thought>Give your step-by-step thought process here</thought>
+	  <supporting_sentences>
+	    <sentence>Include ALL sentences needed to justify your answer</sentence>
+	    <sentence>Use ... for long sentences when appropriate</sentence>
+	    <!-- Add more <sentence> tags as needed -->
+	  </supporting_sentences>
+	  <answer>Your precise answer following the instructions above, or "none" if no answer can be found</answer>
+	</response>
 	"""
-	prompt = (instruction + formatter).format(question=question, contexts=contexts)
+	prompt = (instruction + formatter).format(question=json.dumps(question), contexts=contexts) # Keep question JSON escaped for XML safety
 	return prompt
 
 def multistep(question: str, contexts: str = None):
@@ -154,26 +155,27 @@ def multistep(question: str, contexts: str = None):
 	"""
 	
 	formatter = """
-	Provide your response in this JSON format:
-	{{
-		"question": {question},
-		"thought": "give your step by step thought process here",
-		"sub-questions": [
-			{{
-				"description": "the description of the sub-question",
-				"supporting_sentences": [
-					"Include ALL sentences needed to justify your answer to this sub-question",
-					"Use ... for long sentences when appropriate"
-				],
-				"answer": "Answer to this sub-question"
-			}},
-			...more sub-questions as needed
-		],
-		"conclusion": "Explain how the sub-answers combine to answer the main question",
-		"answer": "Your precise answer to the main question" or "none" if no answer can be found
-	}}
+	Provide your response using the following XML structure:
+	<response>
+	  <question>{question}</question>
+	  <thought>Give your step-by-step thought process here</thought>
+	  <sub-questions>
+	    <sub-question>
+	      <description>The description of the sub-question</description>
+	      <supporting_sentences>
+	        <sentence>Include ALL sentences needed to justify your answer to this sub-question</sentence>
+	        <sentence>Use ... for long sentences when appropriate</sentence>
+	        <!-- Add more <sentence> tags as needed -->
+	      </supporting_sentences>
+	      <answer>Answer to this sub-question</answer>
+	    </sub-question>
+	    <!-- Add more <sub-question> blocks as needed -->
+	  </sub-questions>
+	  <conclusion>Explain how the sub-answers combine to answer the main question</conclusion>
+	  <answer>Your precise answer to the main question, or "none" if no answer can be found</answer>
+	</response>
 	"""
-	prompt = (instruction + formatter).format(question=question, contexts=contexts)
+	prompt = (instruction + formatter).format(question=json.dumps(question), contexts=contexts) # Keep question JSON escaped for XML safety
 	return prompt
 
 def label(question: str, result: dict):
@@ -186,15 +188,15 @@ def label(question: str, result: dict):
 		{result}
 		We define the dependency relationship between sub-questions as: which information in the current sub-question description does not come directly from the original question and contexts, but from the results of other sub-questions.
 		
-		You are a question answering expert specializing in analyzing the dependency relationships between these sub-questions. Please return a JSON object that expresses a complete reasoning trajectory for the original question, including the question, answer, supporting evidence, and dependency relationships of each sub-question. The dependency relationships are represented by the indices of the dependent sub-questions in SUB-QUESTIONS, starting from zero.
+		You are a question answering expert specializing in analyzing the dependency relationships between these sub-questions. Please return an XML structure that expresses a complete reasoning trajectory for the original question, including the question, answer, supporting evidence, and dependency relationships of each sub-question. The dependency relationships are represented by the indices of the dependent sub-questions in SUB-QUESTIONS, starting from zero.
 	"""
 	
 	formatter = '''
-		Format your response as the following JSON object:
-		{
-			"thought": "Give your thought process here",
-			"sub-questions": [
-'''
+		Format your response using the following XML structure:
+		<response>
+		  <thought>Give your thought process here</thought>
+		  <sub-questions>
+''' # Start XML structure
 	formatted_sub_qs = []
 	if isinstance(result.get("sub-questions"), list): # Ensure sub-questions is a list
 		for sub_q_item in result["sub-questions"]:
@@ -220,11 +222,27 @@ def label(question: str, result: dict):
 				desc = sub_q_dict.get("description", "N/A")
 				ans = sub_q_dict.get("answer", "N/A")
 				sup_sent = sub_q_dict.get("supporting_sentences", [])
-				# Format supporting sentences as a JSON list string
-				sup_sent_str = json.dumps(sup_sent)
-   
+				# Format supporting sentences as XML elements
+				sup_sent_xml = ""
+				if isinstance(sup_sent, list):
+					for sent in sup_sent:
+						# Basic XML escaping for content
+						escaped_sent = str(sent).replace('&', '&').replace('<', '<').replace('>', '>')
+						sup_sent_xml += f'          <sentence>{escaped_sent}</sentence>\n'
+				else: # Handle case where supporting_sentences might not be a list as expected
+					sup_sent_xml = f'          <sentence>Error: Expected list, got {type(sup_sent)}</sentence>\n'
+			
 				formatted_sub_qs.append(
-					f'''				{{"description": "{desc}", "answer": "{ans}", "supporting_sentences": {sup_sent_str}, "depend": [<indices of the dependent sub-questions>, ...]}}'''
+					f'''		    <sub-question>
+				    <description>{str(desc).replace('&', '&').replace('<', '<').replace('>', '>')}</description>
+				    <answer>{str(ans).replace('&', '&').replace('<', '<').replace('>', '>')}</answer>
+				    <supporting_sentences>
+{sup_sent_xml}		      </supporting_sentences>
+				    <depend>
+				      <index>Index of prerequisite sub-question (0-based)</index>
+				      <!-- Add more <index> tags if needed, or leave empty -->
+				    </depend>
+				  </sub-question>'''
 				)
 			else:
 				# Log a warning if the item was neither a dict nor a valid JSON string dict
@@ -233,10 +251,11 @@ def label(question: str, result: dict):
 				# The warnings for failed parsing or wrong parsed type are handled above
 				pass
    
-	# Join the valid formatted sub-questions with commas
-	formatter += ",\n".join(formatted_sub_qs)
-	formatter += "\n			]\n		}"
-   
+	# Join the valid formatted sub-questions with newlines
+	formatter += "\n".join(formatted_sub_qs)
+	# Close XML structure
+	formatter += "\n		  </sub-questions>\n		</response>"
+	  
 	# Need to import json at the top of the file for json.dumps
 	return instruction + formatter
 
@@ -337,23 +356,27 @@ def ensemble(question: str, solutions: list, contexts: str = None):
 	"""
 	
 	formatter = """
-		Format your response as the following JSON object:
-		{{
-			"question": "{question}",
-			"thought": "Explain your analysis of the different results and why you chose the final answer",
-			"supporting_sentences": [
-				"Include ALL sentences needed to justify your answer",
-				"Use ... for long sentences when appropriate"
-			],
-			"answer": "The most reliable answer following the answer instructions"
-		}}
+		Format your response using the following XML structure:
+		<response>
+		  <question>{question}</question>
+		  <thought>Explain your analysis of the different results and why you chose the final answer</thought>
+		  <supporting_sentences>
+		    <sentence>Include ALL sentences needed to justify your answer</sentence>
+		    <sentence>Use ... for long sentences when appropriate</sentence>
+		    <!-- Add more <sentence> tags as needed -->
+		  </supporting_sentences>
+		  <answer>The most reliable answer following the answer instructions</answer>
+		</response>
 	"""
-	
 	solutions_str = ""
 	for i, solution in enumerate(solutions):
 		solutions_str += f"solution {i}: {solution}\n"
-	prompt = (instruction + formatter).format(question=question, contexts=contexts, solutions=solutions_str)
+	prompt = (instruction + formatter).format(question=json.dumps(question), contexts=contexts, solutions=solutions_str) # Keep question JSON escaped for XML safety
 	return prompt
+
+	return prompt
+
+logger = logging.getLogger(__name__) # Add logger
 
 # utilization
 def contexts(obj: dict, dataset: str):
@@ -369,19 +392,138 @@ def contexts(obj: dict, dataset: str):
 		raise ValueError("Unknown dataset format: neither 'context' nor 'paragraphs' field found")
 
 def check(name: str, result: dict, *args):
+	# Basic check: Ensure result is a non-empty dictionary
+	if not isinstance(result, dict):
+		logger.debug(f"Check '{name}': Failed - result is not a dict (type: {type(result)})")
+		return False
+	if not result:
+		logger.debug(f"Check '{name}': Failed - result dict is empty (likely XML extraction failure)")
+		return False
+
+	# Helper to check for non-empty string answer
+	def is_valid_answer(answer):
+		return isinstance(answer, str) and answer.lower() not in ["null", "none", ""]
+
+	# Helper to check supporting sentences structure
+	def check_supporting_sentences(sentences_data, log_prefix):
+		if not isinstance(sentences_data, dict) or 'sentence' not in sentences_data:
+			logger.debug(f"{log_prefix}: Failed - 'supporting_sentences' structure invalid or missing 'sentence' key. Data: {sentences_data}")
+			return False
+		sentences = sentences_data['sentence']
+		if not isinstance(sentences, list): sentences = [sentences] # Handle single sentence
+		if not all(isinstance(s, str) for s in sentences):
+			logger.debug(f"{log_prefix}: Failed - Not all items in 'supporting_sentences/sentence' are strings.")
+			return False
+		return True
+
 	if name == "cot":
-		if not check_json(result, ["thought", "answer"]):
+		# Expecting <response><thought>...</thought><answer>...</answer></response>
+		if not all(k in result for k in ['thought', 'answer']):
+			logger.debug(f"Check '{name}': Failed - Missing 'thought' or 'answer'. Keys: {result.keys()}")
 			return False
-		if not isinstance(result["answer"], str) or result["answer"].lower() in ["null", "none", ""]:
+		if not is_valid_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - Invalid answer ('{result['answer']}')")
 			return False
+
 	elif name == "direct":
-		if not check_json(result, ["question", "thought", "supporting_sentences", "answer"]):
+		# Expecting <response><question>...</question><thought>...</thought><supporting_sentences>...</supporting_sentences><answer>...</answer></response>
+		required_keys = ['question', 'thought', 'supporting_sentences', 'answer']
+		if not all(k in result for k in required_keys):
+			logger.debug(f"Check '{name}': Failed - Missing keys. Expected: {required_keys}, Got: {result.keys()}")
 			return False
-		if not isinstance(result["supporting_sentences"], list) or not all(isinstance(s, str) for s in result["supporting_sentences"]):
+		if not check_supporting_sentences(result['supporting_sentences'], f"Check '{name}'"):
 			return False
-		if not isinstance(result["answer"], str) or result["answer"].lower() in ["null", "none", ""]:
+		if not is_valid_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - Invalid answer ('{result['answer']}')")
 			return False
+
+	elif name == "multistep":
+		# Expecting <response><question>...</question><thought>...</thought><sub-questions>...</sub-questions><conclusion>...</conclusion><answer>...</answer></response>
+		required_keys = ['question', 'thought', 'sub-questions', 'conclusion', 'answer']
+		if not all(k in result for k in required_keys):
+			logger.debug(f"Check '{name}': Failed - Missing keys. Expected: {required_keys}, Got: {result.keys()}")
+			return False
+		if not is_valid_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - Invalid answer ('{result['answer']}')")
+			return False
+		# Check sub-questions structure
+		sub_questions_data = result['sub-questions']
+		if not isinstance(sub_questions_data, dict) or 'sub-question' not in sub_questions_data:
+			logger.debug(f"Check '{name}': Failed - 'sub-questions' structure invalid or missing 'sub-question' key. Data: {sub_questions_data}")
+			return False
+		sub_questions_list = sub_questions_data['sub-question']
+		if not isinstance(sub_questions_list, list): sub_questions_list = [sub_questions_list] # Handle single
+		for i, sub_q in enumerate(sub_questions_list):
+			sub_q_keys = ['description', 'supporting_sentences', 'answer']
+			if not isinstance(sub_q, dict) or not all(k in sub_q for k in sub_q_keys):
+				logger.debug(f"Check '{name}': Failed - Sub-question {i} missing keys or not a dict. Expected: {sub_q_keys}, Got: {sub_q.keys() if isinstance(sub_q, dict) else 'N/A'}")
+				return False
+			if not check_supporting_sentences(sub_q['supporting_sentences'], f"Check '{name}' SubQ {i}"):
+				return False
+			# Sub-question answer just needs to be a string
+			if not isinstance(sub_q['answer'], str):
+				logger.debug(f"Check '{name}': Failed - Sub-question {i} 'answer' is not a string.")
+				return False
+
+	elif name == "label":
+		# Expecting <response><thought>...</thought><sub-questions>...</sub-questions></response>
+		required_keys = ['thought', 'sub-questions']
+		if not all(k in result for k in required_keys):
+			logger.debug(f"Check '{name}': Failed - Missing keys. Expected: {required_keys}, Got: {result.keys()}")
+			return False
+		# Check sub-questions structure (includes depend validation)
+		sub_questions_data = result['sub-questions']
+		if not isinstance(sub_questions_data, dict) or 'sub-question' not in sub_questions_data:
+			logger.debug(f"Check '{name}': Failed - 'sub-questions' structure invalid or missing 'sub-question' key. Data: {sub_questions_data}")
+			return False
+		sub_questions_list = sub_questions_data['sub-question']
+		if not isinstance(sub_questions_list, list): sub_questions_list = [sub_questions_list] # Handle single
+		for i, sub_q in enumerate(sub_questions_list):
+			sub_q_keys = ['description', 'answer', 'supporting_sentences', 'depend']
+			if not isinstance(sub_q, dict) or not all(k in sub_q for k in sub_q_keys):
+				# Allow 'depend' to be missing if empty/None, check explicitly later
+				if not all(k in sub_q for k in ['description', 'answer', 'supporting_sentences']):
+					logger.debug(f"Check '{name}': Failed - Sub-question {i} missing required keys or not a dict. Keys: {sub_q.keys() if isinstance(sub_q, dict) else 'N/A'}")
+					return False
+			if not check_supporting_sentences(sub_q['supporting_sentences'], f"Check '{name}' SubQ {i}"):
+				return False
+			if not isinstance(sub_q['answer'], str): # Answer should be string
+				logger.debug(f"Check '{name}': Failed - Sub-question {i} 'answer' is not a string.")
+				return False
+			# Validate 'depend' structure
+			if 'depend' in sub_q and sub_q['depend'] is not None:
+				depend_data = sub_q['depend']
+				if isinstance(depend_data, dict) and 'index' in depend_data:
+					indices = depend_data['index']
+					if not isinstance(indices, list): indices = [indices]
+					if not all(isinstance(idx, (str, int)) for idx in indices):
+						logger.debug(f"Check '{name}': Failed - Sub-question {i} 'depend/index' contains non-str/int values.")
+						return False
+				elif not isinstance(depend_data, dict): # If 'depend' exists but isn't a dict (and not None)
+					logger.debug(f"Check '{name}': Failed - Sub-question {i} 'depend' is not a dict or None.")
+					return False
+
+	elif name == "ensemble":
+		# Expecting <response><question>...</question><thought>...</thought><supporting_sentences>...</supporting_sentences><answer>...</answer></response>
+		# Same structure as 'direct'
+		required_keys = ['question', 'thought', 'supporting_sentences', 'answer']
+		if not all(k in result for k in required_keys):
+			logger.debug(f"Check '{name}': Failed - Missing keys. Expected: {required_keys}, Got: {result.keys()}")
+			return False
+		if not check_supporting_sentences(result['supporting_sentences'], f"Check '{name}'"):
+			return False
+		if not is_valid_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - Invalid answer ('{result['answer']}')")
+			return False
+
 	elif name == "contract":
-		if not check_json(result, ["question", "context"]):
+		# Expecting <question>...</question> and <context>...</context>
+		if not all(k in result for k in ['question', 'context']):
+			logger.debug(f"Check '{name}': Failed - Missing 'question' or 'context'. Keys: {result.keys()}")
 			return False
+		if not isinstance(result['context'], str):
+			logger.debug(f"Check '{name}': Failed - 'context' is not a string.")
+			return False
+
+	logger.debug(f"Check '{name}': Passed.")
 	return True

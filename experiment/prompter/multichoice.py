@@ -1,4 +1,4 @@
-from experiment.utils import check_json
+import logging # Add logging
 
 def direct(question: str):
 	instruction = """
@@ -49,19 +49,24 @@ def label(question: str, trajectory: str, answer: str):
 		   - Does NOT come directly from the original question
 		   - MUST come from the answers of previous sub-questions
 	"""
-	formatter = """
-		Format your response as the following JSON object:
-		{{
-			"thought": "<the thought process of how to step by step propose the sub-questions until the answer of the original question in the given reasoning process is obtained>",
-			"sub-questions": [
-				{{
-					"description": "<the description of the sub-question>", 
-					"answer": <the answer to the sub-question>,
-					"depend": [<indices of the dependent sub-questions>, ...]
-				}}
-			],
-			"answer": "{answer}"
-		}}
+	formatter = f"""
+		Format your response using the following XML structure:
+		<response>
+		  <thought>The thought process of how to step by step propose the sub-questions until the answer of the original question in the given reasoning process is obtained</thought>
+		  <sub-questions>
+		    <sub-question>
+		      <description>The description of the sub-question</description>
+		      <answer>The answer to the sub-question</answer>
+		      <depend>
+		        <index>Index of prerequisite sub-question (0-based)</index>
+		        <!-- Add more <index> tags if needed -->
+		      </depend>
+		      <!-- If no dependencies, leave <depend> empty or omit it -->
+		    </sub-question>
+		    <!-- Add more <sub-question> blocks as needed -->
+		  </sub-questions>
+		  <answer>{answer}</answer> <!-- The final single-letter answer to the original question -->
+		</response>
 	"""
 	return (instruction + formatter).format(question=question, trajectory=trajectory, answer=answer)
 
@@ -121,6 +126,10 @@ def ensemble(question: str, solutions: list):
 	prompt = instruction.format(question=question, solutions=solutions_str)
 	return prompt
 
+	return prompt
+
+logger = logging.getLogger(__name__) # Add logger
+
 def check_answer(answer):
 	if not isinstance(answer, str):
 		return False
@@ -131,22 +140,68 @@ def check_answer(answer):
 	return False
 
 def check(name: str, result: dict, *args):
+	# Basic check: Ensure result is a non-empty dictionary
+	if not isinstance(result, dict):
+		logger.debug(f"Check '{name}': Failed - result is not a dict (type: {type(result)})")
+		return False
+	if not result:
+		logger.debug(f"Check '{name}': Failed - result dict is empty (likely XML extraction failure)")
+		return False
+
 	if name in ["cot", "direct", "multistep", "ensemble"]:
-		if not check_json(result, ["answer"]):
+		# Expecting <answer> tag
+		if 'answer' not in result:
+			logger.debug(f"Check '{name}': Failed - 'answer' key missing. Keys: {result.keys()}")
 			return False
-		if not check_answer(result["answer"]):
+		if not check_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - 'answer' content failed check_answer ('{result['answer']}')")
 			return False
 	elif name == "label":
-		if not check_json(result, ["sub-questions", "answer"]):
+		# Expecting <response><thought>...</thought><sub-questions>...</sub-questions><answer>...</answer></response>
+		if not all(k in result for k in ['thought', 'sub-questions', 'answer']):
+			logger.debug(f"Check '{name}': Failed - Missing 'thought', 'sub-questions', or 'answer'. Keys: {result.keys()}")
 			return False
-		if not check_answer(result["answer"]):
+		if not check_answer(result['answer']):
+			logger.debug(f"Check '{name}': Failed - Top-level 'answer' failed check_answer ('{result['answer']}')")
 			return False
-		for sub_q in result["sub-questions"]:
-			if not check_json(sub_q, ["description", "answer", "depend"]):
+
+		sub_questions_data = result['sub-questions']
+		sub_questions_list = []
+		if isinstance(sub_questions_data, dict) and 'sub-question' in sub_questions_data:
+			sub_questions_list = sub_questions_data['sub-question']
+			if not isinstance(sub_questions_list, list): sub_questions_list = [sub_questions_list]
+		elif isinstance(sub_questions_data, list): # Allow list directly?
+			sub_questions_list = sub_questions_data
+		else:
+			logger.debug(f"Check '{name}': Failed - 'sub-questions' has unexpected structure. Data: {sub_questions_data}")
+			return False
+
+		for i, sub_q in enumerate(sub_questions_list):
+			if not isinstance(sub_q, dict) or not all(k in sub_q for k in ['description', 'answer', 'depend']):
+				logger.debug(f"Check '{name}': Failed - Sub-question {i} missing keys or not a dict. Keys: {sub_q.keys() if isinstance(sub_q, dict) else 'N/A'}")
 				return False
-			if not isinstance(sub_q["depend"], list):
+			# Sub-question answer can be any string here, no specific format check needed like check_answer
+			if not isinstance(sub_q['answer'], str):
+				logger.debug(f"Check '{name}': Failed - Sub-question {i} 'answer' is not a string.")
 				return False
+			# Validate 'depend' structure (similar to math prompter)
+			if 'depend' in sub_q and sub_q['depend'] is not None:
+				depend_data = sub_q['depend']
+				if isinstance(depend_data, dict) and 'index' in depend_data:
+					indices = depend_data['index']
+					if not isinstance(indices, list): indices = [indices]
+					if not all(isinstance(idx, (str, int)) for idx in indices):
+						logger.debug(f"Check '{name}': Failed - Sub-question {i} 'depend/index' contains non-str/int values.")
+						return False
+				elif not isinstance(depend_data, dict):
+					logger.debug(f"Check '{name}': Failed - Sub-question {i} 'depend' is not a dict or None.")
+					return False
+
 	elif name == "contract":
-		if not check_json(result, ["question"]):
+		# Expecting <question> tag
+		if 'question' not in result:
+			logger.debug(f"Check '{name}': Failed - 'question' key missing. Keys: {result.keys()}")
 			return False
+
+	logger.debug(f"Check '{name}': Passed.")
 	return True

@@ -110,12 +110,8 @@ class AtomProcessor:
 					# Generate prompt using the instance's prompter
 					prompt = getattr(instance.prompter, func_name)(*actual_args, **kwargs)
 
-					# Determine response format based on module and function
-					response_format = 'json_object'
-					if instance.module_name != 'multi-hop' or func_name == 'contract':
-						if func_name != 'label':
-							response_format = 'text'
-
+					# Always request text format, as we'll use extract_xml for parsing structured data
+					response_format = 'text'
 					# Call LLM using the instance's llm_manager
 					response = await instance.llm_manager.gen(prompt, response_format=response_format)
 					# --- Added detailed logging for contract raw response ---
@@ -126,11 +122,9 @@ class AtomProcessor:
 					# --- End added logging ---
 
 					# Extract result based on format
-					if response_format == 'json_object':
-						result = extract_json(response)
-					else: # text format
-						result = extract_xml(response)
-					logger.debug(f"Retry wrapper for '{func_name}': Extracted result (type: {type(result)}): {result}")
+					# Always use extract_xml now
+					result = extract_xml(response)
+					logger.debug(f"Retry wrapper for '{func_name}': Extracted XML result (type: {type(result)}): {result}")
 
 					# Store raw response if result is a dict
 					if isinstance(result, dict):
@@ -138,10 +132,11 @@ class AtomProcessor:
 						last_result = result # Update last successful-ish result
 					else:
 						last_result = {'response': response, 'error': 'Extraction failed'}
+						# If extract_xml failed, result will be {} - handle this in check
 
 
 					# Check if the result is valid using the prompter's check function
-					is_valid = instance.prompter.check(func_name, result)
+					is_valid = instance.prompter.check(func_name, result) # Check function needs to handle {} from failed extract_xml
 					logger.debug(f"Retry wrapper for '{func_name}': Check result: {is_valid}")
 					if is_valid:
 						logger.debug(f"Retry wrapper for '{func_name}': Check passed. Returning result.")
@@ -202,15 +197,18 @@ class AtomProcessor:
 				logger.debug("Multistep output is already a dict.")
 				multistep_result_dict = multistep_output
 			elif isinstance(multistep_output, str):
+				# Attempt to parse XML if it's a string
+				logger.debug("Attempting to parse multistep string output as XML.")
+				multistep_result_dict = extract_xml(multistep_output) # Use extract_xml
 				try:
-					# Attempt to parse if it's a string
-					logger.debug("Attempting to parse multistep string output as JSON.")
-					multistep_result_dict = json.loads(multistep_output)
-					logger.debug("Successfully parsed multistep JSON string.")
-				except json.JSONDecodeError as e:
+					# Check if extraction was successful (extract_xml returns {} on failure)
+					if not multistep_result_dict: # Check for empty dict
+						raise ValueError("extract_xml returned empty dict, indicating parsing failure.")
+					logger.debug("Successfully parsed multistep XML string.")
+				except Exception as e: # Catch potential errors during/after extraction
 					# Log error but don't raise here. Let the check below handle the None result.
-					logger.error(f"Failed to parse JSON from multistep string output: {e}", exc_info=False) # exc_info=False to avoid duplicate traceback
-					logger.debug(f"Raw string causing multistep JSON error: {raw_multistep_for_log}")
+					logger.error(f"Failed to parse XML from multistep string output or validation failed: {e}", exc_info=False)
+					logger.debug(f"Raw string causing multistep XML error: {raw_multistep_for_log}")
 					# multistep_result_dict remains None
 			else:
 				# Handle unexpected types (including None if extract_json returned it)
