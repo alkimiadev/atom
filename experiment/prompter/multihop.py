@@ -258,7 +258,7 @@ def contract(question: str, decompose_result: dict, independent: list, dependent
 		1. self-contained: The optimized question must be solvable independently, without relying on any external information
 		2. efficient: The optimized question must be simpler than the original, requiring fewer reasoning steps and having a clearer reasoning process (these steps are reduced because some solved sub-problems become known conditions in the optimized question or are excluded as incorrect explorations)
 		
-		You can freely reason in your response, but please enclose the your optimized question within <question></question> tags, and enclose the complete context needed to answer the optimized question within <context></context> tags
+		You can freely reason in your response, but please enclose the your optimized question within <question></question> tags. Enclose the complete context needed to answer the optimized question within <context></context> tags. IMPORTANT: The content inside the <context> tags MUST be the plain text of the relevant context sentences, NOT a JSON or dictionary structure.
 	"""
 	sub_questions = """
 		The following sub-questions and their answers can serve as known conditions:
