@@ -65,23 +65,37 @@ def extract_xml(string):
 		matches = re.finditer(pattern, string)
 
 		result = {}
+		supporting_sentences_list = [] # Initialize list for sentences
 
-		# Process each match, later matches will overwrite earlier ones
+		# Process each match
 		for match in matches:
 			tag = match.group(1)
 			content = match.group(2).strip()
 
-			# Try to convert content to number if possible
+			# Try to convert content to number if possible, otherwise keep as string
+			value = content # Default to string
 			try:
-				if content.isdigit():
-					value = int(content)
-				else:
+				if '.' in content: # Check for float
 					value = float(content)
-			except:
-				value = content
+				elif content.isdigit() or (content.startswith('-') and content[1:].isdigit()): # Check for int (including negative)
+					value = int(content)
+			except ValueError:
+				pass # Keep as string if conversion fails
 
-			# Simply update the value, overwriting any previous value
-			result[tag] = value
+			# Special handling for sentence tags
+			if tag == 'sentence':
+				supporting_sentences_list.append(value)
+			# Skip the outer supporting_sentences tag itself
+			elif tag == 'supporting_sentences':
+				continue
+			# Handle other tags (overwriting previous values for the same tag)
+			else:
+				result[tag] = value
+
+		# Add the collected sentences if any were found
+		if supporting_sentences_list:
+			# Store under a key that matches the check function's expectation
+			result['supporting_sentences'] = {'sentence': supporting_sentences_list}
 
 		logger.debug(f"Successfully extracted XML: {result}") # Log success
 		return result
