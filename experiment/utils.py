@@ -76,22 +76,35 @@ def extract_xml(string):
         result = {}
         sub_questions_list = []
 
-        # Find the final answer
-        answer_element = root.find('answer')
-        if answer_element is not None and answer_element.text is not None:
-             answer_text = answer_element.text.strip()
-             try:
-                 if '.' in answer_text:
-                     result['answer'] = float(answer_text)
-                 else:
-                     result['answer'] = int(answer_text)
-             except ValueError:
-                 result['answer'] = answer_text # Keep as string if conversion fails
+        # Find the final answer using recursive search
+        answer_element = root.find('.//answer') # Use .// for recursive search
+        if answer_element is not None:
+            logger.debug(f"Found answer_element: Tag={answer_element.tag}, Text='{answer_element.text}'")
+            if answer_element.text is not None:
+                answer_text = answer_element.text.strip()
+                if answer_text: # Check if text is not empty after stripping
+                    try:
+                        if '.' in answer_text:
+                            result['answer'] = float(answer_text)
+                        elif answer_text.isdigit() or (answer_text.startswith('-') and answer_text[1:].isdigit()):
+                             result['answer'] = int(answer_text)
+                        else:
+                             result['answer'] = answer_text # Keep as string if not clearly numeric
+                    except ValueError:
+                        logger.warning(f"ValueError converting answer text '{answer_text}' to number. Keeping as string.")
+                        result['answer'] = answer_text # Keep as string on conversion error
+                else:
+                    logger.warning("Found <answer> tag but its text is empty after stripping.")
+                    result['answer'] = None # Set to None if tag is empty
+            else:
+                logger.warning("Found <answer> tag but it has no text content (text is None).")
+                result['answer'] = None # Set to None if tag exists but has no text
         else:
-             result['answer'] = None # Or some default/error indicator
+            logger.warning("Could not find <answer> tag in the XML.")
+            result['answer'] = None # Set to None if tag is not found
 
         # Find sub-questions
-        sub_questions_element = root.find('sub-questions')
+        sub_questions_element = root.find('.//sub-questions') # Use .// for recursive search
         if sub_questions_element is not None:
             for sub_q_element in sub_questions_element.findall('sub-question'):
                 sub_q_data = {}
