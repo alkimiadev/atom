@@ -1,7 +1,7 @@
 import re
 import os
 import json
-import re
+import xml.etree.ElementTree as ET # Import ElementTree
 import string
 import logging # Add logging import
 from collections import Counter
@@ -55,54 +55,102 @@ def extract_json(string):
 		return None # Return None on other failures
 
 def extract_xml(string):
-	logger.debug(f"Attempting to extract XML from string (length {len(string)}): {string[:200]}...") # Log input (truncated)
-	try:
-		# Remove any leading/trailing whitespace
-		string = string.strip()
+    logger.debug(f"Attempting to extract XML from string (length {len(string)}): {string[:500]}...") # Log input (truncated)
+    try:
+        # Ensure the string is wrapped in a single root element for ET parser
+        # If it doesn't start with '<response>', wrap it.
+        string = string.strip()
+        if not string.startswith('<response>'):
+             # Attempt to find the first opening tag and last closing tag if no <response>
+             first_open = string.find('<')
+             last_close = string.rfind('>')
+             if first_open != -1 and last_close != -1:
+                 string = string[first_open:last_close+1]
+             # As a last resort, wrap the whole thing if structure is uncertain
+             else:
+                 string = f"<root>{string}</root>" # Add a dummy root if needed
 
-		# Use regex to find all tag-content pairs
-		pattern = r"<([\w-]+)>(.*?)</\1>"
-		matches = re.finditer(pattern, string)
+        # Parse the XML string
+        root = ET.fromstring(string)
 
-		result = {}
-		supporting_sentences_list = [] # Initialize list for sentences
+        result = {}
+        sub_questions_list = []
 
-		# Process each match
-		for match in matches:
-			tag = match.group(1)
-			content = match.group(2).strip()
+        # Find the final answer
+        answer_element = root.find('answer')
+        if answer_element is not None and answer_element.text is not None:
+             answer_text = answer_element.text.strip()
+             try:
+                 if '.' in answer_text:
+                     result['answer'] = float(answer_text)
+                 else:
+                     result['answer'] = int(answer_text)
+             except ValueError:
+                 result['answer'] = answer_text # Keep as string if conversion fails
+        else:
+             result['answer'] = None # Or some default/error indicator
 
-			# Try to convert content to number if possible, otherwise keep as string
-			value = content # Default to string
-			try:
-				if '.' in content: # Check for float
-					value = float(content)
-				elif content.isdigit() or (content.startswith('-') and content[1:].isdigit()): # Check for int (including negative)
-					value = int(content)
-			except ValueError:
-				pass # Keep as string if conversion fails
+        # Find sub-questions
+        sub_questions_element = root.find('sub-questions')
+        if sub_questions_element is not None:
+            for sub_q_element in sub_questions_element.findall('sub-question'):
+                sub_q_data = {}
+                desc_element = sub_q_element.find('description')
+                ans_element = sub_q_element.find('answer')
+                dep_element = sub_q_element.find('depend')
 
-			# Special handling for sentence tags
-			if tag == 'sentence':
-				supporting_sentences_list.append(value)
-			# Skip the outer supporting_sentences tag itself
-			elif tag == 'supporting_sentences':
-				continue
-			# Handle other tags (overwriting previous values for the same tag)
-			else:
-				result[tag] = value
+                if desc_element is not None and desc_element.text is not None:
+                    sub_q_data['description'] = desc_element.text.strip()
+                else:
+                     sub_q_data['description'] = "" # Default empty string
 
-		# Add the collected sentences if any were found
-		if supporting_sentences_list:
-			# Store under a key that matches the check function's expectation
-			result['supporting_sentences'] = {'sentence': supporting_sentences_list}
+                if ans_element is not None and ans_element.text is not None:
+                    ans_text = ans_element.text.strip()
+                    try:
+                        if '.' in ans_text:
+                            sub_q_data['answer'] = float(ans_text)
+                        elif ans_text.isdigit() or (ans_text.startswith('-') and ans_text[1:].isdigit()):
+                             sub_q_data['answer'] = int(ans_text)
+                        else: # Handle non-numeric answers like 'Yes', 'No', lists etc.
+                             sub_q_data['answer'] = ans_text
+                    except ValueError:
+                        sub_q_data['answer'] = ans_text # Keep as string on error
+                else:
+                     sub_q_data['answer'] = None # Default None
 
-		logger.debug(f"Successfully extracted XML: {result}") # Log success
-		return result
-	except Exception as e:
-		logger.error(f"Failed to extract XML: {e}", exc_info=True) # Log error
-		logger.debug(f"Original string causing XML error: {string}") # Log original string on error
-		return {}
+                dependencies = []
+                if dep_element is not None:
+                    for index_element in dep_element.findall('index'):
+                        if index_element.text is not None:
+                            try:
+                                dependencies.append(int(index_element.text.strip()))
+                            except ValueError:
+                                logger.warning(f"Non-integer dependency index found: {index_element.text.strip()}")
+                                # Decide how to handle: skip, add as string, etc. Skipping for now.
+                                pass
+                sub_q_data['depend'] = dependencies
+                sub_questions_list.append(sub_q_data)
+
+        # Add the collected sub-questions if any were found
+        if sub_questions_list:
+            result['sub-questions'] = sub_questions_list
+        # Handle case where sub-questions might be missing but answer is present
+        elif 'answer' not in result:
+             # If neither answer nor sub-questions found, return empty or signal error
+             logger.warning("XML structure seems invalid or missing expected tags 'answer' and 'sub-questions'.")
+             return {}
+
+
+        logger.debug(f"Successfully extracted XML: {str(result)[:500]}...") # Log success (truncated)
+        return result
+    except ET.ParseError as e:
+        logger.error(f"Failed to parse XML: {e}", exc_info=False)
+        logger.debug(f"Original string causing XML ParseError: {string}") # Log original string on error
+        return {} # Return empty dict on parse error
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during XML extraction: {e}", exc_info=True) # Log other errors
+        logger.debug(f"Original string causing unexpected XML error: {string}") # Log original string on error
+        return {}
 
 def check_json(json_obj, keys: list):
 	if not isinstance(json_obj, dict):
