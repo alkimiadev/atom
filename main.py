@@ -25,7 +25,7 @@ from llm import LLMManager # Import the class
 # Configuration constants
 LOG_DIR = "log/{dataset}/{size}"
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(name)s - %(funcName)s - %(message)s'
-LOG_LEVEL = logging.INFO # Default level, can be adjusted
+LOG_LEVEL = logging.DEBUG # Default level, can be adjusted
 
 # Dataset configuration
 @dataclass
