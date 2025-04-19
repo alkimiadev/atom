@@ -4,8 +4,10 @@ import time
 import argparse
 import logging # Added import
 import datetime
+import random # Added import for sampling
+from math import ceil # Added for batch calculation
 from dataclasses import dataclass
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional # Added Optional
 from tqdm.asyncio import tqdm
 
 from experiment.dataset import load_data
@@ -80,15 +82,28 @@ def setup_logging(dataset: str, interval: str, log_dir_format: str):
 logger = logging.getLogger(__name__) # Add logger for this module
 
 class ExperimentRunner:
-	def __init__(self, dataset: str, model: str, start: int = 0, end: int = -1, mode: str = "atom"):
+	def __init__(self, dataset: str, model: str, start: int = 0, end: int = -1, mode: str = "atom",
+				 batch_size: Optional[int] = None, sample_size: Optional[int] = None):
 		# Initialize experiment runner
-		logger.info(f"Initializing ExperimentRunner: dataset={dataset}, model={model}, start={start}, end={end}, mode={mode}")
+		logger.info(f"Initializing ExperimentRunner: dataset={dataset}, model={model}, start={start}, end={end}, mode={mode}, batch_size={batch_size}, sample_size={sample_size}")
 		self.dataset = dataset
 		self.start = start
 		self.end = None if end == -1 else end
-		self.interval = "full" if self.end is None else f"{start}-{end}"
-		self.timestamp = time.time()
 		self.mode = mode
+		self.batch_size = batch_size
+		self.sample_size = sample_size
+		self.timestamp = time.time()
+
+		# Determine interval string for logging/output dirs
+		if self.sample_size is not None:
+			self.interval = f"sample-{self.sample_size}"
+		elif self.end is None:
+			self.interval = "full"
+		else:
+			self.interval = f"{start}-{end}"
+		if self.batch_size is not None and self.sample_size is None: # Add batch info if batching a slice/full
+			self.interval += f"_batch-{self.batch_size}"
+
 		# Validate dataset support
 		if dataset not in DATASET_CONFIGS:
 			logger.error(f"Unsupported dataset: {dataset}") # Log error
@@ -169,18 +184,29 @@ class ExperimentRunner:
 			entry["score"] = scoring_function(entry["answer"], groundtruth)
 		return entry
 	
-	def update_score_log(self, accuracy: float) -> None:
+	def update_score_log(self, accuracy: float, num_items_processed: int) -> None:
 		# Update score log
 		log_entry = {
-			"start": self.start,
-			"end": self.end,
+			"mode": self.mode,
+			"model": self.llm_manager.model_name, # Log the model used
+			"dataset": self.dataset,
+			"interval": self.interval, # Use the potentially modified interval string
+			"start": self.start if self.sample_size is None else None, # Log start/end only if not sampling
+			"end": self.end if self.sample_size is None else None,
+			"sample_size": self.sample_size,
+			"batch_size": self.batch_size,
+			"num_items_processed": num_items_processed,
 			# Use manager methods for stats
 			"token": {"prompt": self.llm_manager.get_token()[0], "completion": self.llm_manager.get_token()[1]},
 			"call_count": self.llm_manager.get_call_count(),
 			"accuracy": accuracy,
+			"timestamp": datetime.datetime.now().isoformat(), # Add timestamp of score logging
+			"duration_seconds": time.time() - self.timestamp, # Add duration
 		}
-		
+
 		score_log_file = LOG_DIR.format(dataset=self.dataset, size=self.interval) + "/score.json"
+		# Ensure directory exists before trying to load/save
+		os.makedirs(os.path.dirname(score_log_file), exist_ok=True)
 		existing_log = load_json(score_log_file) if os.path.exists(score_log_file) else {}
 		count = get_file_count(LOG_DIR, self.interval, self.dataset, exclude_score=True)
 
@@ -191,59 +217,131 @@ class ExperimentRunner:
 	
 	async def run(self) -> float:
 		# Run experiment and return accuracy
-		logger.info(f"Starting experiment run: mode={self.mode}, dataset={self.dataset}, interval={self.interval}")
-		print(f"Running {self.mode} experiment on {self.dataset} dataset from index {self.start} to {self.end}") # Keep print for user visibility
+		run_description = f"mode={self.mode}, dataset={self.dataset}, interval={self.interval}"
+		if self.sample_size is not None:
+			run_description += f", sample_size={self.sample_size}"
+		elif self.batch_size is not None:
+			run_description += f", batch_size={self.batch_size}"
+		logger.info(f"Starting experiment run: {run_description}")
+		print(f"Running {self.mode} experiment on {self.dataset} dataset ({self.interval})") # Keep print for user visibility
 
-		# Load test set
-		logger.info(f"Loading test data for {self.dataset} [{self.start}:{self.end}]")
-		testset = load_data(self.dataset, "test")[self.start:self.end]
-		logger.info(f"Loaded {len(testset)} items.") # Log item count
-		logger.info("Gathering results...") # Log gathering start
-		results = await self.gather_results(testset)
-		logger.info(f"Gathered {len(results)} results.") # Log gathering end
-
-		# Build results
-		logger.info("Constructing result entries...") # Log construction start
-		json_obj = []
-		for i, (result, data) in enumerate(zip(results, testset)):
-			 try:
-				 entry = self.construct_entry(result, data)
-				 json_obj.append(entry)
-			 except Exception as e:
-				 logger.error(f"Error constructing entry for item {self.start + i}: {e}", exc_info=True) # Log construction error
-				 # Optionally add a placeholder or skip the entry
-				 json_obj.append({
-					 "problem": "Error processing item",
-					 "groundtruth": data.get(self.config.answer_key, "N/A"),
-					 "response": None,
-					 "answer": None,
-					 "log": result[1] if isinstance(result, tuple) and len(result) > 1 else None, # Log from processor if available
-					 "score": 0,
-					 "error": str(e)
-				 })
-
-		if not json_obj:
-			 logger.error("No results were successfully processed.") # Log if no results
-			 # Handle case with no results (e.g., return 0 accuracy or raise error)
-			 accuracy = 0.0
+		# --- Load/Select Data ---
+		if self.sample_size is not None:
+			logger.info(f"Loading full test data for {self.dataset} to sample {self.sample_size} items.")
+			full_testset = load_data(self.dataset, "test")
+			if self.sample_size > len(full_testset):
+				logger.warning(f"Sample size ({self.sample_size}) is larger than the dataset size ({len(full_testset)}). Using the entire dataset.")
+				self.sample_size = len(full_testset)
+			testset = random.sample(full_testset, self.sample_size)
+			logger.info(f"Sampled {len(testset)} items.")
 		else:
-			 accuracy = sum(entry["score"] for entry in json_obj) / len(json_obj)
-		logger.info(f"Calculated accuracy: {accuracy:.4f}") # Log accuracy
+			start_idx = self.start
+			end_idx = self.end
+			logger.info(f"Loading test data for {self.dataset} [{start_idx}:{end_idx}]")
+			# Load the slice; handle potential slicing issues if end is None
+			full_testset = load_data(self.dataset, "test")
+			testset = full_testset[start_idx:end_idx] # end_idx=None handles slicing to the end
+			logger.info(f"Loaded {len(testset)} items.")
+
+		if not testset:
+			logger.error("Test set is empty. Check start/end indices or sampling parameters.")
+			print("Error: Test set is empty. Aborting run.")
+			return 0.0
+
+		# --- Process Data (Batching or Full) ---
+		all_results = []
+		all_json_obj = []
+		original_indices = list(range(self.start, self.start + len(testset))) if self.sample_size is None else ["sampled"] * len(testset) # Track original index if not sampling
+
+		if self.batch_size is not None and self.sample_size is None:
+			num_batches = ceil(len(testset) / self.batch_size)
+			logger.info(f"Processing {len(testset)} items in {num_batches} batches of size {self.batch_size}.")
+			for i in range(0, len(testset), self.batch_size):
+				batch_start_index = i
+				batch_end_index = min(i + self.batch_size, len(testset))
+				batch_data = testset[batch_start_index:batch_end_index]
+				batch_original_indices = original_indices[batch_start_index:batch_end_index]
+				batch_num = (i // self.batch_size) + 1
+				logger.info(f"Processing batch {batch_num}/{num_batches} (Items {self.start + batch_start_index}-{self.start + batch_end_index -1})...")
+
+				batch_results = await self.gather_results(batch_data)
+				logger.info(f"Gathered {len(batch_results)} results for batch {batch_num}.")
+				all_results.extend(batch_results) # Append raw results if needed later
+
+				# Construct entries for the current batch
+				logger.info(f"Constructing result entries for batch {batch_num}...")
+				for j, (result, data) in enumerate(zip(batch_results, batch_data)):
+					item_original_index = batch_original_indices[j]
+					try:
+						entry = self.construct_entry(result, data)
+						entry["original_index"] = item_original_index # Add original index
+						all_json_obj.append(entry)
+					except Exception as e:
+						log_index = f"sampled_{j}" if self.sample_size is not None else self.start + batch_start_index + j
+						logger.error(f"Error constructing entry for item {log_index}: {e}", exc_info=True)
+						all_json_obj.append({
+							"problem": "Error processing item",
+							"groundtruth": data.get(self.config.answer_key, "N/A"),
+							"response": None,
+							"answer": None,
+							"log": result[1] if isinstance(result, tuple) and len(result) > 1 else None,
+							"score": 0,
+							"error": str(e),
+							"original_index": item_original_index
+						})
+			logger.info("Finished processing all batches.")
+		else:
+			# Process all at once (sampling or no batching)
+			logger.info(f"Processing {len(testset)} items all at once...")
+			results = await self.gather_results(testset)
+			logger.info(f"Gathered {len(results)} results.")
+			all_results = results # Assign results directly
+
+			# Build results
+			logger.info("Constructing result entries...")
+			for i, (result, data) in enumerate(zip(results, testset)):
+				item_original_index = original_indices[i]
+				try:
+					entry = self.construct_entry(result, data)
+					entry["original_index"] = item_original_index # Add original index
+					all_json_obj.append(entry)
+				except Exception as e:
+					log_index = f"sampled_{i}" if self.sample_size is not None else self.start + i
+					logger.error(f"Error constructing entry for item {log_index}: {e}", exc_info=True)
+					all_json_obj.append({
+						"problem": "Error processing item",
+						"groundtruth": data.get(self.config.answer_key, "N/A"),
+						"response": None,
+						"answer": None,
+						"log": result[1] if isinstance(result, tuple) and len(result) > 1 else None,
+						"score": 0,
+						"error": str(e),
+						"original_index": item_original_index
+					})
+
+		# --- Calculate Accuracy ---
+
+		if not all_json_obj:
+			logger.error("No results were successfully processed.") # Log if no results
+			accuracy = 0.0
+		else:
+			accuracy = sum(entry["score"] for entry in all_json_obj) / len(all_json_obj)
+		logger.info(f"Calculated final accuracy: {accuracy:.4f} across {len(all_json_obj)} items.") # Log accuracy
 
 		# Save results
-		log_file = get_next_log_file(LOG_DIR, self.interval, self.dataset)
+		log_file = get_next_log_file(LOG_DIR, self.interval, self.dataset, exclude_score=True) # Pass exclude_score
 		logger.info(f"Saving detailed results to: {log_file}") # Log save path
-		save_json(log_file, json_obj)
+		save_json(log_file, all_json_obj)
 
 		# Update score log
 		logger.info("Updating score log.") # Log score update
-		self.update_score_log(accuracy)
+		self.update_score_log(accuracy, len(all_json_obj))
 
 		# Print result summary (Keep for user visibility)
-		print(f"Unsolved: {round((1-accuracy) * len(json_obj))}")
+		print(f"Items processed: {len(all_json_obj)}")
 		print(f"Accuracy: {accuracy:.4f}")
 		print(f"Time taken: {duration_formatter(time.time() - self.timestamp)}")
-		logger.info("Experiment run finished.") # Log run finish
+		logger.info(f"Experiment run finished for interval: {self.interval}") # Log run finish
 
 		return accuracy
 
@@ -330,11 +428,28 @@ async def main():
 						help='Model to use for the experiment')
 	parser.add_argument('--mode', type=str, choices=['atom', 'plugin'], default='atom',
 						help='Mode: atom (standard experiment) or plugin (generate contracted dataset)')
-	
+	parser.add_argument('--batch-size', type=int, default=None,
+						help='Process dataset in batches of this size (mutually exclusive with --sample-size)')
+	parser.add_argument('--sample-size', type=int, default=None,
+						help='Randomly sample this many items from the dataset (mutually exclusive with --batch-size)')
+
 	args = parser.parse_args()
 
+	# Validate mutually exclusive arguments
+	if args.batch_size is not None and args.sample_size is not None:
+		parser.error("Arguments --batch-size and --sample-size are mutually exclusive.")
+
 	# --- Setup Logging ---
-	interval = "full" if args.end == -1 else f"{args.start}-{args.end}"
+	# Determine interval string for logging setup (initial guess, runner might refine)
+	if args.sample_size is not None:
+		interval = f"sample-{args.sample_size}"
+	elif args.end == -1:
+		interval = "full"
+	else:
+		interval = f"{args.start}-{args.end}"
+	if args.batch_size is not None and args.sample_size is None:
+		interval += f"_batch-{args.batch_size}"
+
 	setup_logging(args.dataset, interval, LOG_DIR) # Call logging setup
 	logger.info(f"Parsed arguments: {args}") # Log arguments
 	# --- End Logging Setup ---
@@ -356,7 +471,9 @@ async def main():
 			model=args.model,
 			start=args.start,
 			end=args.end,
-			mode=args.mode
+			mode=args.mode,
+			batch_size=args.batch_size,
+			sample_size=args.sample_size
 		)
 		await runner.run()
 	else:
