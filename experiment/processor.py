@@ -198,8 +198,11 @@ class AtomProcessor:
 				multistep_result_dict = multistep_output
 			elif isinstance(multistep_output, str):
 				# Attempt to parse XML if it's a string
+				logger.debug(f"Input to extract_xml (type {type(multistep_output)}): {str(multistep_output)[:500]}...") # ADDED
+				# Attempt to parse XML if it's a string
 				logger.debug("Attempting to parse multistep string output as XML.")
 				multistep_result_dict = extract_xml(multistep_output) # Use extract_xml
+				logger.debug(f"Output of extract_xml: {multistep_result_dict}") # ADDED
 				try:
 					# Check if extraction was successful (extract_xml returns {} on failure)
 					if not multistep_result_dict: # Check for empty dict
