@@ -426,15 +426,23 @@ def check(name: str, result: dict, *args):
 			return False
 
 	elif name == "direct":
+		logger.debug(f"Check '{name}': Validating result dict: {result}") # Log the full result dict
 		# Expecting <response><question>...</question><thought>...</thought><supporting_sentences>...</supporting_sentences><answer>...</answer></response>
 		required_keys = ['question', 'thought', 'supporting_sentences', 'answer']
 		if not all(k in result for k in required_keys):
 			logger.debug(f"Check '{name}': Failed - Missing keys. Expected: {required_keys}, Got: {result.keys()}")
 			return False
-		if not check_supporting_sentences(result['supporting_sentences'], f"Check '{name}'"):
+		# Log supporting sentences before checking
+		supporting_sentences_data = result.get('supporting_sentences')
+		logger.debug(f"Check '{name}': Validating supporting_sentences data (type {type(supporting_sentences_data)}): {supporting_sentences_data}")
+		if not check_supporting_sentences(supporting_sentences_data, f"Check '{name}'"):
+			# Specific log inside check_supporting_sentences will indicate the failure reason
 			return False
-		if not is_valid_answer(result['answer']):
-			logger.debug(f"Check '{name}': Failed - Invalid answer ('{result['answer']}')")
+		# Log answer before checking
+		answer_data = result.get('answer')
+		logger.debug(f"Check '{name}': Validating answer data (type {type(answer_data)}): '{answer_data}'")
+		if not is_valid_answer(answer_data):
+			logger.debug(f"Check '{name}': Failed - Invalid answer ('{answer_data}')")
 			return False
 
 	elif name == "multistep":
