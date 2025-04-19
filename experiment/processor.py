@@ -118,7 +118,12 @@ class AtomProcessor:
 
 					# Call LLM using the instance's llm_manager
 					response = await instance.llm_manager.gen(prompt, response_format=response_format)
-					logger.debug(f"Retry wrapper for '{func_name}': Raw response received (type: {type(response)}): {str(response)[:200]}...")
+					# --- Added detailed logging for contract raw response ---
+					if func_name == 'contract':
+						logger.info(f"Retry wrapper for 'contract': Raw LLM response received:\n--- START CONTRACT RESPONSE ---\n{response}\n--- END CONTRACT RESPONSE ---")
+					else:
+						logger.debug(f"Retry wrapper for '{func_name}': Raw response received (type: {type(response)}): {str(response)[:200]}...")
+					# --- End added logging ---
 
 					# Extract result based on format
 					if response_format == 'json_object':
