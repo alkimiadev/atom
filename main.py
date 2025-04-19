@@ -153,6 +153,7 @@ class ExperimentRunner:
 	
 	def construct_entry(self, result: Tuple[Dict[str, Any], Any], data: Dict[str, Any]) -> Dict[str, Any]:
 		# Construct result entry
+		logger.debug(f"Constructing entry. Raw result: {result}, Raw data: {data}") # ADDED LOG
 		result_data, log = result
 		question_key = self.config.question_key
 		answer_key = self.config.answer_key
@@ -177,11 +178,19 @@ class ExperimentRunner:
 		scoring_function = getattr(__import__(f"experiment.utils", fromlist=[self.config.scoring_function]), 
 								  self.config.scoring_function)
 		
-		# Pass different parameters based on scoring function
-		if self.config.scoring_function == "score_math":
-			entry["score"] = scoring_function(entry["answer"], groundtruth, self.dataset)
+		# Log values just before scoring
+		logger.debug(f"Values before scoring: answer='{entry['answer']}', groundtruth='{entry['groundtruth']}'") # ADDED LOG
+		
+		# Check if answer is None before scoring
+		if entry["answer"] is None:
+			logger.warning(f"Prediction (answer) is None for question: {entry['problem'][:100]}... Assigning score 0.")
+			entry["score"] = 0
 		else:
-			entry["score"] = scoring_function(entry["answer"], groundtruth)
+			# Pass different parameters based on scoring function
+			if self.config.scoring_function == "score_math":
+				entry["score"] = scoring_function(entry["answer"], groundtruth, self.dataset)
+			else:
+				entry["score"] = scoring_function(entry["answer"], groundtruth)
 		return entry
 	
 	def update_score_log(self, accuracy: float, num_items_processed: int) -> None:
