@@ -444,11 +444,8 @@ async def main():
 
 	args = parser.parse_args()
 
-	# Validate mutually exclusive arguments
-	if args.batch_size is not None and args.sample_size is not None:
-		parser.error("Arguments --batch-size and --sample-size are mutually exclusive.")
-
 	# --- Setup Logging ---
+	# Determine interval string for logging setup (initial guess, runner might refine)
 	# Determine interval string for logging setup (initial guess, runner might refine)
 	if args.sample_size is not None:
 		interval = f"sample-{args.sample_size}"
