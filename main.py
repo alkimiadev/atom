@@ -338,7 +338,7 @@ class ExperimentRunner:
 		logger.info(f"Calculated final accuracy: {accuracy:.4f} across {len(all_json_obj)} items.") # Log accuracy
 
 		# Save results
-		log_file = get_next_log_file(LOG_DIR, self.interval, self.dataset, exclude_score=True) # Pass exclude_score
+		log_file = get_next_log_file(LOG_DIR, self.interval, self.dataset) # Pass exclude_score
 		logger.info(f"Saving detailed results to: {log_file}") # Log save path
 		save_json(log_file, all_json_obj)
 
