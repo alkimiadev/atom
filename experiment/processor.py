@@ -114,12 +114,9 @@ class AtomProcessor:
 					response_format = 'text'
 					# Call LLM using the instance's llm_manager
 					response = await instance.llm_manager.gen(prompt, response_format=response_format)
-					# --- Added detailed logging for contract raw response ---
-					if func_name == 'contract':
-						logger.info(f"Retry wrapper for 'contract': Raw LLM response received:\n--- START CONTRACT RESPONSE ---\n{response}\n--- END CONTRACT RESPONSE ---")
-					else:
-						logger.debug(f"Retry wrapper for '{func_name}': Raw response received (type: {type(response)}): {str(response)[:200]}...")
-					# --- End added logging ---
+					# --- Enhanced logging for raw LLM response ---
+					logger.info(f"Retry wrapper for '{func_name}': Raw LLM response received (type: {type(response)}):\n--- START RAW RESPONSE ({func_name}) ---\n{response}\n--- END RAW RESPONSE ({func_name}) ---")
+					# --- End enhanced logging ---
 
 					# Extract result based on format
 					# Always use extract_xml now
@@ -198,11 +195,10 @@ class AtomProcessor:
 				multistep_result_dict = multistep_output
 			elif isinstance(multistep_output, str):
 				# Attempt to parse XML if it's a string
-				logger.debug(f"Input to extract_xml (type {type(multistep_output)}): {str(multistep_output)[:500]}...") # ADDED
-				# Attempt to parse XML if it's a string
-				logger.debug("Attempting to parse multistep string output as XML.")
+				logger.info(f"Decompose: Raw multistep string output (type {type(multistep_output)}) before XML parsing:\n--- START RAW MULTISTEP STRING ---\n{multistep_output}\n--- END RAW MULTISTEP STRING ---") # MODIFIED - Log full string
+				logger.debug("Decompose: Attempting to parse multistep string output as XML.")
 				multistep_result_dict = extract_xml(multistep_output) # Use extract_xml
-				logger.debug(f"Output of extract_xml: {multistep_result_dict}") # ADDED
+				logger.info(f"Decompose: Output of extract_xml (type {type(multistep_result_dict)}): {multistep_result_dict}") # MODIFIED - Log result clearly
 				try:
 					# Check if extraction was successful (extract_xml returns {} on failure)
 					if not multistep_result_dict: # Check for empty dict
