@@ -101,7 +101,7 @@ class ExperimentRunner:
 			self.interval = "full"
 		else:
 			self.interval = f"{start}-{end}"
-		if self.batch_size is not None and self.sample_size is None: # Add batch info if batching a slice/full
+		if self.batch_size is not None: # Add batch info if batching a slice/full or sample
 			self.interval += f"_batch-{self.batch_size}"
 
 		# Validate dataset support
@@ -262,7 +262,7 @@ class ExperimentRunner:
 		all_json_obj = []
 		original_indices = list(range(self.start, self.start + len(testset))) if self.sample_size is None else ["sampled"] * len(testset) # Track original index if not sampling
 
-		if self.batch_size is not None and self.sample_size is None:
+		if self.batch_size is not None: # Allow batching even if sample_size is set
 			num_batches = ceil(len(testset) / self.batch_size)
 			logger.info(f"Processing {len(testset)} items in {num_batches} batches of size {self.batch_size}.")
 			for i in range(0, len(testset), self.batch_size):
