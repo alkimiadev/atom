@@ -341,304 +341,45 @@ class AtomProcessor:
 		return contractd_thought, contractd_question, contraction_result
 
 	async def atom(self, question: str, contexts: Optional[str] = None, direct_result: Optional[Dict] = None, decompose_result: Optional[Dict] = None, depth: Optional[int] = None, log: Optional[Dict] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-		'''Performs the Atom of Thoughts process recursively.'''
-		# Initialize logging for this level
+		'''
+		Performs the Atom of Thoughts process by delegating to AtomStepExecutor.
+		This method now acts as the entry point and orchestrator for the execution step.
+		'''
+		# Initialize the top-level log dictionary if not provided
 		log = log if log is not None else {}
-		index = len(log)
-		log[index] = {}
-		logger.debug(f"Atom started (level {index}). Question: {question[:100]}..., Depth: {depth}")
+		# Determine the current execution level based on the log length
+		level = len(log)
 
-		# Base case: depth limit reached
-		if depth == 0:
-			logger.info(f"Atom (level {index}): Depth limit reached. Returning base case.")
-			# Return format consistent with recursive step but indicate termination
-			return {'method': 'depth_limit', 'response': None, 'answer': None}, log
+		logger.debug(f"AtomProcessor.atom called (level {level}). Instantiating AtomStepExecutor.")
 
-		# --- Step 1: Get results from Direct and Decompose approaches ---
-		logger.debug(f"Atom (level {index}): Step 1 - Getting Direct and Decompose results.")
-		direct_args = [question]
-		if self.module_name == 'multi-hop':
-			direct_args.append(contexts)
-		# Use provided results if available (for recursion), otherwise compute
-		logger.debug(f"Atom (level {index}): Calling direct...")
-		direct_result = direct_result if direct_result else await self.direct(*direct_args)
-		logger.debug(f"Atom (level {index}): Direct result: {direct_result}")
+		# Instantiate the executor for this step
+		executor = AtomStepExecutor(
+			processor=self,
+			question=question,
+			contexts=contexts,
+			direct_result_in=direct_result, # Pass potentially pre-computed results
+			decompose_result_in=decompose_result,
+			depth_in=depth, # Pass the depth constraint for this level
+			log_in=log,     # Pass the existing log
+			level=level     # Pass the current level index
+		)
 
-		decompose_args = {'contexts': contexts} if self.module_name == 'multi-hop' else {}
-		# self.decompose might return a string or a dict
-		logger.debug(f"Atom (level {index}): Calling decompose...")
-		decompose_output = decompose_result if decompose_result else await self.decompose(question, **decompose_args)
-		logger.debug(f"Atom (level {index}): Decompose raw output (type {type(decompose_output)}): {str(decompose_output)[:200]}...")
+		# Run the execution step
+		final_result, updated_log = await executor.run()
 
-		# --- Process Decompose Result (Handle String or Dict) ---
-		decompose_result_dict = None
-		raw_decompose_for_log = decompose_output # Keep original for logging if parsing fails
-		if isinstance(decompose_output, str):
-			try:
-				# Attempt to parse if it's a string
-				logger.debug(f"Atom (level {index}): Attempting to parse decompose string output as JSON.")
-				decompose_result_dict = json.loads(decompose_output)
-				logger.debug(f"Atom (level {index}): Successfully parsed decompose JSON string.")
-			except json.JSONDecodeError as e:
-				error_msg = f'JSON parsing failed for decompose result: {e}'
-				logger.error(f"Atom (level {index}): {error_msg}", exc_info=True)
-				log[index].update({'error': error_msg, 'raw_decompose': raw_decompose_for_log, 'direct': direct_result})
-				# Fallback to direct result if JSON is invalid
-				logger.warning(f"Atom (level {index}): Falling back to direct result due to decompose JSON parsing error.")
-				final_result = {
-					'method': 'direct_fallback',
-					'response': direct_result.get('response'),
-					'answer': direct_result.get('answer'),
-				}
-				return final_result, log
-		elif isinstance(decompose_output, dict):
-			# Use directly if it's already a dictionary
-			logger.debug(f"Atom (level {index}): Decompose output is already a dict.")
-			decompose_result_dict = decompose_output
-		else:
-			# Handle unexpected type
-			error_msg = f'Unexpected type from decompose: {type(decompose_output)}'
-			logger.error(f"Atom (level {index}): {error_msg}")
-			log[index].update({'error': error_msg, 'raw_decompose': raw_decompose_for_log, 'direct': direct_result})
-			logger.warning(f"Atom (level {index}): Falling back to direct result due to unexpected decompose type.")
-			final_result = {
-				'method': 'direct_fallback',
-				'response': direct_result.get('response'),
-				'answer': direct_result.get('answer'),
-			}
-			return final_result, log
+		# --- Potential Future Recursion Logic ---
+		# The original logic didn't implement recursion based on the result.
+		# If recursion were desired, logic would go here to check `final_result['method']`,
+		# potentially adjust inputs (e.g., use `final_result['answer']` as the new question),
+		# decrement depth, and call `self.atom` again.
+		# For now, we just return the result of the single execution step.
+		# Example (Conceptual - DO NOT IMPLEMENT YET):
+		# if final_result['method'] == 'decompose' and depth > 1:
+		#     logger.info(f"AtomProcessor.atom (level {level}): Deeper recursion potentially needed...")
+		#     # return await self.atom(question=..., contexts=..., ..., depth=depth-1, log=updated_log)
 
-
-		# Handle potential failure in decompose or missing 'sub-questions' key after processing
-		if not decompose_result_dict or 'sub-questions' not in decompose_result_dict:
-			error_msg = 'Decomposition failed or missing sub-questions'
-			logger.error(f"Atom (level {index}): {error_msg}")
-			log[index].update({'error': error_msg, 'raw_decompose': raw_decompose_for_log, 'parsed_decompose': decompose_result_dict, 'direct': direct_result})
-			# Return direct result if decompose fails or structure is wrong
-			logger.warning(f"Atom (level {index}): Falling back to direct result due to decompose failure or missing sub-questions.")
-			final_result = {
-				'method': 'direct_fallback',
-				'response': direct_result.get('response'),
-				'answer': direct_result.get('answer'),
-			}
-			return final_result, log
-		logger.debug(f"Atom (level {index}): Processed decompose result (dict): {decompose_result_dict}")
-
-		# --- Step 2: Set recursion depth ---
-		logger.debug(f"Atom (level {index}): Step 2 - Setting recursion depth.")
-		try:
-			current_depth = calculate_depth(decompose_result_dict['sub-questions'])
-			logger.debug(f"Atom (level {index}): Calculated depth from decompose result: {current_depth}")
-		except Exception as e:
-			error_msg = f'Depth calculation failed: {e}'
-			logger.error(f"Atom (level {index}): {error_msg}", exc_info=True)
-			log[index].update({'error': error_msg, 'direct': direct_result, 'decompose': decompose_result_dict})
-			# Return direct result if depth calculation fails
-			logger.warning(f"Atom (level {index}): Falling back to direct result due to depth calculation error.")
-			final_result = {
-				'method': 'direct_fallback',
-				'response': direct_result.get('response'),
-				'answer': direct_result.get('answer'),
-			}
-			return final_result, log
-
-		# Determine depth for this level: minimum of default, calculated, or passed-in depth
-		depth = depth if depth is not None else self.atom_depth
-		depth = min(depth, current_depth)
-		logger.debug(f"Atom (level {index}): Effective depth for this level set to: {depth}")
-
-
-		# --- Step 3: Separate sub-questions and perform Merging (Contraction) ---
-		logger.debug(f"Atom (level {index}): Step 3 - Separating sub-questions and merging.")
-		# --- Log the sub-questions list before processing ---
-		sub_questions_list = decompose_result_dict.get('sub-questions', []) # Use .get for safety
-		logger.debug(f"Atom (level {index}): Sub-questions list type: {type(sub_questions_list)}, Content (first 500 chars): {str(sub_questions_list)[:500]}")
-
-		# --- Process sub-questions with logging ---
-		independent_subqs = []
-		dependent_subqs = []
-		if isinstance(sub_questions_list, list):
-			for i, sub_q in enumerate(sub_questions_list):
-				logger.debug(f"Atom (level {index}): Processing sub_q #{i}: Type={type(sub_q)}, Value={str(sub_q)[:200]}")
-				try:
-					# Check if it's a dictionary before calling .get()
-					if isinstance(sub_q, dict):
-						if not sub_q.get('depend'):
-							independent_subqs.append(sub_q)
-						else:
-							dependent_subqs.append(sub_q)
-					else:
-						logger.warning(f"Atom (level {index}): Sub_q #{i} is not a dictionary, skipping dependency check.")
-						# Decide how to handle non-dict items. Maybe add to independent? Or skip?
-						# For now, let's skip adding it to either list if it's not a dict.
-				except Exception as e:
-					logger.error(f"Atom (level {index}): Error processing sub_q #{i}: {e}", exc_info=True)
-		else:
-			logger.error(f"Atom (level {index}): 'sub-questions' is not a list, cannot separate.")
-
-
-		logger.debug(f"Atom (level {index}): Separated sub-questions. Independent: {len(independent_subqs)}, Dependent: {len(dependent_subqs)}")
-
-		merging_args = {
-			'question': question,
-			'decompose_result': decompose_result_dict, # Use the processed dictionary
-			'independent_subqs': independent_subqs,
-			'dependent_subqs': dependent_subqs
-		}
-		if self.module_name == 'multi-hop':
-			merging_args['contexts'] = contexts
-
-		try:
-			logger.debug(f"Atom (level {index}): Calling merging...")
-			contractd_thought, contractd_question, contraction_result = await self.merging(**merging_args)
-			logger.debug(f"Atom (level {index}): Merging successful. Contraction result: {contraction_result}")
-		except Exception as e:
-			error_msg = f'Merging failed: {e}'
-			logger.error(f"Atom (level {index}): {error_msg}", exc_info=True)
-			log[index].update({'error': error_msg, 'direct': direct_result, 'decompose': decompose_result})
-			# Fallback if merging fails
-			logger.warning(f"Atom (level {index}): Falling back to direct result due to merging error.")
-			final_result = {
-				'method': 'direct_fallback', # Or potentially decompose fallback?
-				'response': direct_result.get('response'),
-				'answer': direct_result.get('answer'),
-			}
-			return final_result, log
-
-
-		# Augment contraction result for logging and potential use
-		contraction_result['contraction_thought'] = contractd_thought
-		contraction_result['sub-questions'] = independent_subqs + [{
-			'description': contractd_question,
-			'response': contraction_result.get('response', ''),
-			'answer': contraction_result.get('answer', ''),
-			'depend': [] # The contracted question depends on the independent ones implicitly
-		}]
-		logger.debug(f"Atom (level {index}): Augmented contraction result: {contraction_result}")
-
-		# --- Step 4: Ensemble ---
-		logger.debug(f"Atom (level {index}): Step 4 - Performing ensemble.")
-		ensemble_args = [question]
-		# Ensure responses exist before appending
-		responses_for_ensemble = [
-			res.get('response') for res in [direct_result, decompose_result, contraction_result] if res and res.get('response')
-		]
-		ensemble_args.append(responses_for_ensemble)
-		logger.debug(f"Atom (level {index}): Ensemble responses count: {len(responses_for_ensemble)}")
-
-		if self.module_name == 'multi-hop':
-			ensemble_args.append(contexts)
-
-		try:
-			logger.debug(f"Atom (level {index}): Calling ensemble...")
-			ensemble_result = await self.ensemble(*ensemble_args)
-			ensemble_answer = ensemble_result.get('answer', '')
-			logger.debug(f"Atom (level {index}): Ensemble successful. Result: {ensemble_result}")
-		except Exception as e:
-			error_msg = f'Ensemble failed: {e}'
-			logger.error(f"Atom (level {index}): {error_msg}", exc_info=True)
-			log[index].update({'error': error_msg, 'direct': direct_result, 'decompose': decompose_result, 'contract': contraction_result})
-			# Fallback if ensemble fails - maybe pick best of the three? For now, direct.
-			logger.warning(f"Atom (level {index}): Falling back to direct answer due to ensemble error.")
-			ensemble_result = {'answer': direct_result.get('answer')} # Use direct answer as fallback
-			ensemble_answer = ensemble_result['answer']
-			# Consider logging the fallback choice
-			logger.debug(f"Atom (level {index}): Using fallback ensemble answer: {ensemble_answer}")
-
-
-		# --- Step 5: Scoring ---
-		logger.debug(f"Atom (level {index}): Step 5 - Scoring results against ensemble answer: '{ensemble_answer}'")
-		scores = []
-		results_to_score = [direct_result, decompose_result, contraction_result]
-		# Check if all valid results have the same answer as the ensemble
-		valid_answers = [res.get('answer') for res in results_to_score if res and 'answer' in res]
-
-		if valid_answers and all(ans == ensemble_answer for ans in valid_answers):
-			scores = [1.0] * len(results_to_score) # Assign perfect score if all match ensemble
-			logger.debug(f"Atom (level {index}): All valid answers matched ensemble. Scores: {scores}")
-		else:
-			logger.debug(f"Atom (level {index}): Scoring each result individually.")
-			for i, result in enumerate(results_to_score):
-				method_name = ['direct', 'decompose', 'contract'][i]
-				if result and 'answer' in result and self.score_func:
-					try:
-						# Ensure score_func handles potential None/empty answers gracefully
-						result_answer = result.get('answer')
-						score_value = self.score_func(result_answer, ensemble_answer)
-						scores.append(score_value)
-						logger.debug(f"Atom (level {index}): Score for {method_name} ('{result_answer}') vs ensemble ('{ensemble_answer}') = {score_value}")
-					except Exception as e:
-						logger.error(f"Atom (level {index}): Scoring failed for {method_name} result: {e}", exc_info=True) # Replaced print with logger.error
-						scores.append(0.0) # Assign 0 score on error
-				else:
-					logger.debug(f"Atom (level {index}): Assigning 0 score to {method_name} (invalid result, missing answer, or no score_func).")
-					scores.append(0.0) # Assign 0 score if result is invalid or missing answer
-
-		# Ensure scores list matches the number of results
-		while len(scores) < len(results_to_score):
-			scores.append(0.0)
-		logger.debug(f"Atom (level {index}): Final scores: {scores}")
-
-		# --- Step 6: Update Log ---
-		logger.debug(f"Atom (level {index}): Step 6 - Updating log dictionary.")
-		log[index].update({
-			'scores': scores,
-			'direct': direct_result,
-			'decompose': decompose_result,
-			'contract': contraction_result,
-			'ensemble': ensemble_result # Log ensemble result too
-		})
-
-		# --- Step 7: Select Best Method ---
-		logger.debug(f"Atom (level {index}): Step 7 - Selecting best method based on scores.")
-		methods = {
-			0: ('direct', direct_result),
-			1: ('decompose', decompose_result),
-			2: ('contract', contraction_result),
-			-1: ('ensemble', ensemble_result) # Fallback/default
-		}
-
-		best_method_idx = -1
-		if scores: # Check if scores list is not empty
-			max_score = max(scores)
-			# Find the first index matching the max score
-			try:
-				best_method_idx = scores.index(max_score)
-			except ValueError:
-				logger.warning(f"Atom (level {index}): Max score not found in scores list {scores}. Defaulting to ensemble.")
-				best_method_idx = -1 # Should not happen if scores is not empty, but safety first
-
-		# If multiple methods have the same max score, default to ensemble or a predefined order?
-		# Current logic takes the first one found (direct > decompose > contract).
-		# If max score is low (e.g., 0), maybe ensemble is better? Add threshold?
-		# For now, stick to the index of max score, defaulting to ensemble if index is invalid.
-
-		method, result = methods.get(best_method_idx, methods[-1])
-		log[index]['method'] = method
-		logger.info(f"Atom (level {index}): Selected best method: {method} (Index: {best_method_idx}, Score: {scores[best_method_idx] if best_method_idx != -1 else 'N/A - Ensemble Fallback'})")
-
-		# --- Step 8: Recursive Call or Return ---
-		logger.debug(f"Atom (level {index}): Step 8 - Preparing return value.")
-		# Decide if recursion is needed based on selected method and depth
-		# Currently, recursion isn't implemented in the original logic based on method choice.
-		# The original logic seems to run one level and return the best.
-		# If recursive refinement was intended, it would go here, passing the chosen 'result'
-		# and decrementing 'depth'.
-
-		# Return the selected result for this level
-		# The final result structure is slightly different for the top level (index == 0)
-		if index == 0:
-			final_return_result = {
-				'method': method,
-				'response': result.get('response'),
-				'answer': result.get('answer'),
-			}
-			logger.info(f"Atom finished (Top Level). Returning method: {method}, Final Result: {final_return_result}")
-			return final_return_result, log
-		else:
-			# For recursive calls, just return the result dictionary
-			logger.info(f"Atom finished (Recursive Level {index}). Returning method: {method}, Result: {result}")
-			return result, log
+		logger.info(f"AtomProcessor.atom finished (level {level}). Returning method: {final_result.get('method')}")
+		return final_result, updated_log
 
 
 	async def plugin(self, question: str, contexts: Optional[str] = None, sample_num: int = 3) -> str:
@@ -807,3 +548,485 @@ class AtomProcessor:
 	async def ensemble(self, question: str, results: list, contexts: Optional[str] = None):
 		# Logic handled by the retry decorator using self.prompter.ensemble
 		pass
+
+# ==============================================================================
+# AtomStepExecutor Class - Encapsulates one level of Atom execution
+# ==============================================================================
+
+class AtomStepExecutor:
+	'''
+	Executes a single step/level of the Atom of Thoughts process.
+	Encapsulates the logic previously found in AtomProcessor.atom.
+	'''
+	def __init__(self, processor: 'AtomProcessor', question: str, contexts: Optional[str] = None,
+				 direct_result_in: Optional[Dict] = None, decompose_result_in: Optional[Dict] = None,
+				 depth_in: Optional[int] = None, log_in: Optional[Dict] = None, level: int = 0):
+		'''
+		Initializes the AtomStepExecutor.
+
+		Args:
+			processor: Reference to the parent AtomProcessor instance.
+			question: The question for this step.
+			contexts: Optional context for multi-hop.
+			direct_result_in: Optional pre-computed direct result.
+			decompose_result_in: Optional pre-computed decompose result.
+			depth_in: The maximum depth allowed for this execution path.
+			log_in: The log dictionary from the parent level.
+			level: The current execution level/index for logging.
+		'''
+		self.processor_ref: 'AtomProcessor' = processor
+		self.question: str = question
+		self.contexts: Optional[str] = contexts
+		self.direct_result_in: Optional[Dict] = direct_result_in
+		self.decompose_result_in: Optional[Dict] = decompose_result_in
+		self.depth_in: Optional[int] = depth_in
+		self.log_in: Optional[Dict] = log_in
+		self.level: int = level
+
+		# State for this step's execution
+		self.log: Dict = log_in if log_in is not None else {}
+		if self.level not in self.log:
+			self.log[self.level] = {}
+
+		self.direct_result: Optional[Dict] = None
+		self.decompose_result: Optional[Dict] = None
+		self.contraction_result: Optional[Dict] = None
+		self.ensemble_result: Optional[Dict] = None
+		self.scores: List[float] = []
+		self.best_method: Optional[str] = None
+		self.final_result_for_level: Optional[Dict] = None
+		self.error: Optional[str] = None
+		self.fallback_triggered: bool = False
+
+		# Use a child logger for potentially clearer source identification
+		self.logger = logger.getChild(self.__class__.__name__)
+		self.logger.debug(f"Initialized (level {self.level}). Question: {self.question[:100]}..., Depth: {self.depth_in}")
+
+	async def run(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+		'''
+		Executes the full sequence of operations for one Atom step.
+
+		Returns:
+			A tuple containing the final result dictionary for this level
+			and the updated log dictionary.
+		'''
+		self.logger.debug(f"Run started (level {self.level}).")
+
+		if self._initialize_log_and_check_depth():
+			self._update_log() # Update log with base case info
+			self.logger.debug(f"Run finished early (level {self.level}): Depth limit reached.")
+			return self.final_result_for_level, self.log
+
+		if not await self._get_direct_and_decompose():
+			self._update_log() # Update log with fallback info
+			self.logger.debug(f"Run finished early (level {self.level}): Fallback during direct/decompose.")
+			return self.final_result_for_level, self.log
+
+		if not self._calculate_and_set_depth():
+			self._update_log() # Update log with fallback info
+			self.logger.debug(f"Run finished early (level {self.level}): Fallback during depth calculation.")
+			return self.final_result_for_level, self.log
+
+		if not await self._merge_subquestions():
+			self._update_log() # Update log with fallback info
+			self.logger.debug(f"Run finished early (level {self.level}): Fallback during merging.")
+			return self.final_result_for_level, self.log
+
+		if not await self._perform_ensemble():
+			# Even if ensemble fails, we proceed to scoring using the fallback answer
+			self.logger.warning(f"Run continuing (level {self.level}) despite ensemble fallback.")
+			# Fallback is handled within _perform_ensemble, log updated there
+
+		self._score_results()
+		self._select_best_method()
+		self._update_log()
+
+		self.logger.debug(f"Run finished (level {self.level}). Returning method: {self.best_method}")
+		return self.final_result_for_level, self.log
+
+	# --- Private Helper Methods ---
+
+	def _initialize_log_and_check_depth(self) -> bool:
+		'''Handles log initialization and the depth base case check.'''
+		# Log initialization is now done in __init__
+		# Base case: depth limit reached
+		if self.depth_in == 0:
+			self.logger.info(f"(Level {self.level}): Depth limit reached. Returning base case.")
+			self.best_method = 'depth_limit'
+			self.final_result_for_level = {'method': 'depth_limit', 'response': None, 'answer': None}
+			return True # Indicate depth limit reached
+		return False # Depth limit not reached
+
+	async def _get_direct_and_decompose(self) -> bool:
+		'''Executes steps to get direct_result and decompose_result.'''
+		self.logger.debug(f"(Level {self.level}): Step 1 - Getting Direct and Decompose results.")
+		direct_args = [self.question]
+		if self.processor_ref.module_name == 'multi-hop':
+			direct_args.append(self.contexts)
+
+		# Use provided results if available (for recursion), otherwise compute
+		self.logger.debug(f"(Level {self.level}): Calling direct...")
+		try:
+			self.direct_result = self.direct_result_in if self.direct_result_in else await self.processor_ref.direct(*direct_args)
+			self.logger.debug(f"(Level {self.level}): Direct result: {self.direct_result}")
+		except Exception as e:
+			# Handle potential error during direct call itself
+			self._handle_error_and_fallback('direct_call', e)
+			return False # Cannot proceed without direct result
+
+		decompose_args = {'contexts': self.contexts} if self.processor_ref.module_name == 'multi-hop' else {}
+		self.logger.debug(f"(Level {self.level}): Calling decompose...")
+		try:
+			decompose_output = self.decompose_result_in if self.decompose_result_in else await self.processor_ref.decompose(self.question, **decompose_args)
+			self.logger.debug(f"(Level {self.level}): Decompose raw output (type {type(decompose_output)}): {str(decompose_output)[:200]}...")
+		except Exception as e:
+			# Handle potential error during decompose call itself
+			self._handle_error_and_fallback('decompose_call', e)
+			return False
+
+		# --- Process Decompose Result (Handle String or Dict) ---
+		raw_decompose_for_log = decompose_output # Keep original for logging if parsing fails
+		if isinstance(decompose_output, str):
+			try:
+				self.logger.debug(f"(Level {self.level}): Attempting to parse decompose string output as JSON.")
+				self.decompose_result = json.loads(decompose_output)
+				self.logger.debug(f"(Level {self.level}): Successfully parsed decompose JSON string.")
+			except json.JSONDecodeError as e:
+				self._handle_error_and_fallback('decompose_parsing', e, raw_data=raw_decompose_for_log)
+				return False # Indicate failure/fallback
+		elif isinstance(decompose_output, dict):
+			self.logger.debug(f"(Level {self.level}): Decompose output is already a dict.")
+			self.decompose_result = decompose_output
+		else:
+			self._handle_error_and_fallback('decompose_unexpected_type', TypeError(f'Unexpected type from decompose: {type(decompose_output)}'), raw_data=raw_decompose_for_log)
+			return False # Indicate failure/fallback
+
+		# Handle potential failure in decompose or missing 'sub-questions' key after processing
+		if not self.decompose_result or 'sub-questions' not in self.decompose_result:
+			err_msg = 'Decomposition result missing sub-questions key or is invalid.'
+			self.logger.error(f"(Level {self.level}): {err_msg} Result: {self.decompose_result}")
+			self._handle_error_and_fallback('decompose_invalid_structure', ValueError(err_msg), raw_data=raw_decompose_for_log)
+			return False # Indicate failure/fallback
+
+		self.logger.debug(f"(Level {self.level}): Processed decompose result (dict): {self.decompose_result}")
+		return True # Indicate success
+
+	def _calculate_and_set_depth(self) -> bool:
+		'''Calculates depth from decompose_result and determines the effective depth.'''
+		self.logger.debug(f"(Level {self.level}): Step 2 - Setting recursion depth.")
+		try:
+			# Ensure sub-questions is a list before passing to calculate_depth
+			sub_questions = self.decompose_result.get('sub-questions')
+			if not isinstance(sub_questions, list):
+				raise TypeError(f"'sub-questions' key does not contain a list. Found: {type(sub_questions)}")
+			current_depth = calculate_depth(sub_questions)
+			self.logger.debug(f"(Level {self.level}): Calculated depth from decompose result: {current_depth}")
+		except Exception as e:
+			self._handle_error_and_fallback('depth_calculation', e, raw_data=self.decompose_result)
+			return False # Indicate failure/fallback
+
+		# Determine depth for this level: minimum of default, calculated, or passed-in depth
+		effective_depth = self.depth_in if self.depth_in is not None else self.processor_ref.atom_depth
+		effective_depth = min(effective_depth, current_depth)
+		# Note: We don't store effective_depth as an attribute as it's only used for potential recursion,
+		# which is not fully implemented in the original logic we are refactoring.
+		self.logger.debug(f"(Level {self.level}): Effective depth for this level set to: {effective_depth}")
+		return True # Indicate success
+
+	async def _merge_subquestions(self) -> bool:
+		'''Separates sub-questions and performs Merging (Contraction).'''
+		self.logger.debug(f"(Level {self.level}): Step 3 - Separating sub-questions and merging.")
+		sub_questions_list = self.decompose_result.get('sub-questions', []) # Use .get for safety
+		self.logger.debug(f"(Level {self.level}): Sub-questions list type: {type(sub_questions_list)}, Content (first 500 chars): {str(sub_questions_list)[:500]}")
+
+		independent_subqs = []
+		dependent_subqs = []
+		if isinstance(sub_questions_list, list):
+			for i, sub_q in enumerate(sub_questions_list):
+				self.logger.debug(f"(Level {self.level}): Processing sub_q #{i}: Type={type(sub_q)}, Value={str(sub_q)[:200]}")
+				try:
+					if isinstance(sub_q, dict):
+						# Check for the 'depend' key and if it's empty/falsey
+						if not sub_q.get('depend'):
+							independent_subqs.append(sub_q)
+						else:
+							dependent_subqs.append(sub_q)
+					else:
+						self.logger.warning(f"(Level {self.level}): Sub_q #{i} is not a dictionary, skipping dependency check.")
+				except Exception as e:
+					# Log error processing a specific sub-question but continue if possible
+					self.logger.error(f"(Level {self.level}): Error processing sub_q #{i}: {e}", exc_info=True)
+		else:
+			# If 'sub-questions' is not a list, we cannot proceed with merging logic.
+			self.logger.error(f"(Level {self.level}): 'sub-questions' is not a list, cannot separate for merging.")
+			self._handle_error_and_fallback('merge_invalid_subquestions_list', TypeError("'sub-questions' is not a list"))
+			return False # Indicate failure/fallback
+
+		self.logger.debug(f"(Level {self.level}): Separated sub-questions. Independent: {len(independent_subqs)}, Dependent: {len(dependent_subqs)}")
+
+		merging_args = {
+			'question': self.question,
+			'decompose_result': self.decompose_result, # Use the processed dictionary
+			'independent_subqs': independent_subqs,
+			'dependent_subqs': dependent_subqs
+		}
+		if self.processor_ref.module_name == 'multi-hop':
+			merging_args['contexts'] = self.contexts
+
+		try:
+			self.logger.debug(f"(Level {self.level}): Calling merging...")
+			contractd_thought, contractd_question, self.contraction_result = await self.processor_ref.merging(**merging_args)
+			self.logger.debug(f"(Level {self.level}): Merging successful. Contraction result: {self.contraction_result}")
+
+			# Augment contraction result for logging and potential use
+			if isinstance(self.contraction_result, dict):
+				self.contraction_result['contraction_thought'] = contractd_thought
+				# Keep original augmentation for logging consistency
+				self.contraction_result['sub-questions'] = independent_subqs + [{
+					'description': contractd_question,
+					'response': self.contraction_result.get('response', ''),
+					'answer': self.contraction_result.get('answer', ''),
+					'depend': [] # Implicit dependency
+				}]
+				self.logger.debug(f"(Level {self.level}): Augmented contraction result: {self.contraction_result}")
+			else:
+				# If merging didn't return a dict, treat it as an error.
+				raise TypeError(f"Merging result is not a dictionary: {type(self.contraction_result)}")
+
+		except Exception as e:
+			self._handle_error_and_fallback('merging', e)
+			return False # Indicate failure/fallback
+
+		return True # Indicate success
+
+	async def _perform_ensemble(self) -> bool:
+		'''Executes the ensemble step.'''
+		self.logger.debug(f"(Level {self.level}): Step 4 - Performing ensemble.")
+		ensemble_args = [self.question]
+		# Ensure responses exist and are strings before appending
+		results_for_ensemble = [self.direct_result, self.decompose_result, self.contraction_result]
+		responses_for_ensemble = []
+		for res in results_for_ensemble:
+			if res and isinstance(res, dict):
+				response = res.get('response')
+				if isinstance(response, str): # Ensure it's a string
+					responses_for_ensemble.append(response)
+				elif response is not None:
+					self.logger.warning(f"(Level {self.level}): Non-string response found for ensemble: {type(response)}. Converting to string.")
+					responses_for_ensemble.append(str(response))
+
+		ensemble_args.append(responses_for_ensemble)
+		self.logger.debug(f"(Level {self.level}): Ensemble input responses count: {len(responses_for_ensemble)}")
+
+		if self.processor_ref.module_name == 'multi-hop':
+			ensemble_args.append(self.contexts)
+
+		try:
+			self.logger.debug(f"(Level {self.level}): Calling ensemble...")
+			self.ensemble_result = await self.processor_ref.ensemble(*ensemble_args)
+			self.logger.debug(f"(Level {self.level}): Ensemble successful. Result: {self.ensemble_result}")
+			# Ensure ensemble result is a dict
+			if not isinstance(self.ensemble_result, dict):
+				raise TypeError(f"Ensemble result is not a dictionary: {type(self.ensemble_result)}")
+
+		except Exception as e:
+			self._handle_error_and_fallback('ensemble', e)
+			# Use direct answer as fallback for ensemble answer
+			ensemble_answer_fallback = self.direct_result.get('answer') if self.direct_result and isinstance(self.direct_result, dict) else None
+			self.ensemble_result = {'answer': ensemble_answer_fallback} # Set fallback result structure
+			self.logger.warning(f"(Level {self.level}): Using fallback ensemble answer: '{ensemble_answer_fallback}'")
+			# We don't return False here, as scoring can still proceed with the fallback answer.
+
+		return True # Indicate success (even if fallback was used internally for the answer)
+
+	def _score_results(self):
+		'''Scores results against the ensemble answer.'''
+		self.logger.debug(f"(Level {self.level}): Step 5 - Scoring results.")
+		self.scores = []
+		results_to_score = [self.direct_result, self.decompose_result, self.contraction_result]
+		# Safely get ensemble answer
+		ensemble_answer = None
+		if self.ensemble_result and isinstance(self.ensemble_result, dict):
+			ensemble_answer = self.ensemble_result.get('answer')
+
+		score_func = self.processor_ref.score_func
+
+		if ensemble_answer is not None and score_func:
+			self.logger.debug(f"(Level {self.level}): Scoring against ensemble answer: '{ensemble_answer}'")
+			# Check if all valid results have the same answer as the ensemble
+			valid_answers = []
+			for res in results_to_score:
+				if res and isinstance(res, dict) and 'answer' in res:
+					valid_answers.append(res.get('answer'))
+
+			# Check if valid_answers is not empty before the 'all' check
+			if valid_answers and all(ans == ensemble_answer for ans in valid_answers):
+				self.scores = [1.0] * len(results_to_score) # Assign perfect score if all match ensemble
+				self.logger.debug(f"(Level {self.level}): All valid answers matched ensemble. Scores: {self.scores}")
+			else:
+				self.logger.debug(f"(Level {self.level}): Scoring each result individually.")
+				for i, result in enumerate(results_to_score):
+					method_name = ['direct', 'decompose', 'contract'][i]
+					result_answer = None
+					if result and isinstance(result, dict) and 'answer' in result:
+						result_answer = result.get('answer')
+
+					if result_answer is not None:
+						try:
+							score_value = score_func(result_answer, ensemble_answer)
+							self.scores.append(score_value)
+							self.logger.debug(f"(Level {self.level}): Score for {method_name} ('{result_answer}') vs ensemble ('{ensemble_answer}') = {score_value}")
+						except Exception as e:
+							self.logger.error(f"(Level {self.level}): Scoring failed for {method_name} result: {e}", exc_info=True)
+							self.scores.append(0.0) # Assign 0 score on error
+					else:
+						self.logger.debug(f"(Level {self.level}): Assigning 0 score to {method_name} (invalid result or missing/None answer).")
+						self.scores.append(0.0) # Assign 0 score if result is invalid or missing answer
+		else:
+			if ensemble_answer is None:
+				self.logger.warning(f"(Level {self.level}): Cannot score results because ensemble answer is None.")
+			if not score_func:
+				self.logger.warning(f"(Level {self.level}): Cannot score results because score_func is not set.")
+			self.scores = [0.0] * len(results_to_score) # Assign 0 scores if scoring is not possible
+
+		# Ensure scores list matches the number of results
+		while len(self.scores) < len(results_to_score):
+			self.scores.append(0.0)
+		self.logger.debug(f"(Level {self.level}): Final scores: {self.scores}")
+
+	def _select_best_method(self):
+		'''Selects the best method based on scores or fallback conditions.'''
+		self.logger.debug(f"(Level {self.level}): Step 7 - Selecting best method.")
+		methods = {
+			0: ('direct', self.direct_result),
+			1: ('decompose', self.decompose_result),
+			2: ('contract', self.contraction_result),
+			# Ensemble result itself isn't usually the final choice unless others fail badly,
+			# but we keep it as a potential fallback target if scoring leads nowhere.
+			-1: ('ensemble_fallback', self.ensemble_result)
+		}
+
+		# If a fallback was triggered earlier, the final result is already set
+		if self.fallback_triggered:
+			self.best_method = 'direct_fallback'
+			# final_result_for_level is already set in _handle_error_and_fallback
+			self.logger.info(f"(Level {self.level}): Fallback previously triggered. Final method: {self.best_method}")
+			return # Exit early as decision is made
+
+		# If depth limit reached, decision is already made
+		if self.depth_in == 0:
+			self.best_method = 'depth_limit'
+			# final_result_for_level is already set in _initialize_log_and_check_depth
+			self.logger.info(f"(Level {self.level}): Depth limit reached. Final method: {self.best_method}")
+			return # Exit early
+
+		# Select based on scores
+		best_method_idx = -1
+		if self.scores: # Check if scores list is not empty and contains non-zero scores
+			max_score = max(self.scores)
+			# Only consider scores > 0? Or just the max? Let's stick to max for now.
+			# Find the first index matching the max score (priority: direct > decompose > contract)
+			try:
+				best_method_idx = self.scores.index(max_score)
+			except ValueError:
+				# This should not happen if self.scores is not empty, but handle defensively.
+				self.logger.warning(f"(Level {self.level}): Max score not found in scores list {self.scores}. Defaulting.")
+				best_method_idx = -1 # Default to ensemble fallback below
+		else:
+			self.logger.warning(f"(Level {self.level}): Scores list is empty. Defaulting.")
+			best_method_idx = -1 # Default to ensemble fallback
+
+		# Get the selected method name and result dict
+		selected_method_name, selected_result_dict = methods.get(best_method_idx, methods[-1])
+
+		# Ensure the selected result is a dictionary, default to empty if not
+		if not isinstance(selected_result_dict, dict):
+			self.logger.warning(f"(Level {self.level}): Selected result for method '{selected_method_name}' is not a dictionary ({type(selected_result_dict)}). Using empty dict.")
+			selected_result_dict = {}
+
+		self.best_method = selected_method_name
+		# Construct the final result structure expected by the caller
+		self.final_result_for_level = {
+			'method': self.best_method,
+			'response': selected_result_dict.get('response'),
+			'answer': selected_result_dict.get('answer'),
+		}
+
+		score_info = f"Score: {self.scores[best_method_idx]}" if best_method_idx != -1 and best_method_idx < len(self.scores) else 'N/A or Fallback'
+		self.logger.info(f"(Level {self.level}): Selected best method: {self.best_method} (Index: {best_method_idx}, {score_info})")
+
+
+	def _update_log(self):
+		'''Populates the log dictionary for this level with final decisions and intermediate results.'''
+		self.logger.debug(f"(Level {self.level}): Step 8 - Updating log dictionary.")
+		# Ensure log entry for this level exists
+		if self.level not in self.log:
+			self.log[self.level] = {}
+
+		log_entry = {
+			'method': self.best_method, # Final selected method
+			'scores': self.scores,
+			'direct': self.direct_result,
+			'decompose': self.decompose_result,
+			'contract': self.contraction_result,
+			'ensemble': self.ensemble_result, # Log ensemble result too
+		}
+		if self.error:
+			log_entry['error'] = self.error
+		if self.fallback_triggered:
+			log_entry['fallback_triggered'] = True
+
+		self.log[self.level].update(log_entry)
+		self.logger.debug(f"(Level {self.level}): Log updated.")
+
+
+	def _handle_error_and_fallback(self, step_name: str, error: Exception, raw_data: Any = None):
+		'''Centralized function to log errors, trigger fallback, and set final result.'''
+		error_msg = f'{step_name} failed: {error}'
+		self.logger.error(f"(Level {self.level}): {error_msg}", exc_info=True) # Log with traceback
+		self.error = error_msg # Store the error message for logging
+		self.fallback_triggered = True
+
+		# Ensure log entry for this level exists before updating
+		if self.level not in self.log:
+			self.log[self.level] = {}
+
+		# Store relevant data in log for debugging
+		log_update = {
+			'error': self.error,
+			'fallback_triggered': True,
+			# Log direct result as it's the fallback target
+			'direct': self.direct_result,
+		}
+		# Add specific context based on the step that failed
+		if step_name in ['decompose_call', 'decompose_parsing', 'decompose_unexpected_type', 'decompose_invalid_structure']:
+			log_update['raw_decompose'] = raw_data
+			# Log parsed decompose only if it exists and wasn't the source of the error
+			if step_name != 'decompose_parsing' and self.decompose_result is not None:
+				log_update['parsed_decompose'] = self.decompose_result
+		elif step_name == 'depth_calculation':
+			log_update['decompose'] = self.decompose_result
+		elif step_name in ['merging', 'merge_invalid_subquestions_list']:
+			log_update['decompose'] = self.decompose_result
+		elif step_name == 'ensemble':
+			# Log inputs to ensemble if available
+			log_update['decompose'] = self.decompose_result
+			log_update['contract'] = self.contraction_result
+
+		self.log[self.level].update(log_update)
+
+		# Set final result to direct result as fallback
+		self.logger.warning(f"(Level {self.level}): Falling back to direct result due to {step_name} error.")
+		# Safely get response/answer from direct_result
+		direct_response = None
+		direct_answer = None
+		if self.direct_result and isinstance(self.direct_result, dict):
+			direct_response = self.direct_result.get('response')
+			direct_answer = self.direct_result.get('answer')
+
+		self.final_result_for_level = {
+			'method': 'direct_fallback',
+			'response': direct_response,
+			'answer': direct_answer,
+		}
+		self.best_method = 'direct_fallback' # Ensure best_method reflects the fallback
