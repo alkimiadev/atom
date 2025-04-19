@@ -74,85 +74,76 @@ def extract_xml(string):
         root = ET.fromstring(string)
 
         result = {}
+        supporting_sentences_list = []
         sub_questions_list = []
 
-        # Find the final answer using recursive search
-        answer_element = root.find('.//answer') # Use .// for recursive search
-        if answer_element is not None:
-            logger.debug(f"Found answer_element: Tag={answer_element.tag}, Text='{answer_element.text}'")
-            if answer_element.text is not None:
-                answer_text = answer_element.text.strip()
-                if answer_text: # Check if text is not empty after stripping
-                    try:
-                        if '.' in answer_text:
-                            result['answer'] = float(answer_text)
-                        elif answer_text.isdigit() or (answer_text.startswith('-') and answer_text[1:].isdigit()):
-                             result['answer'] = int(answer_text)
-                        else:
-                             result['answer'] = answer_text # Keep as string if not clearly numeric
-                    except ValueError:
-                        logger.warning(f"ValueError converting answer text '{answer_text}' to number. Keeping as string.")
-                        result['answer'] = answer_text # Keep as string on conversion error
-                else:
-                    logger.warning("Found <answer> tag but its text is empty after stripping.")
-                    result['answer'] = None # Set to None if tag is empty
+        # Iterate through direct children of the root element
+        for element in root:
+            tag = element.tag
+            content = element.text.strip() if element.text else ""
+
+            # Try to convert content to number if possible, otherwise keep as string
+            value = content # Default to string
+            try:
+                if '.' in content: # Check for float
+                    value = float(content)
+                elif content.isdigit() or (content.startswith('-') and content[1:].isdigit()): # Check for int (including negative)
+                    value = int(content)
+            except ValueError:
+                pass # Keep as string if conversion fails
+
+            # Handle nested structures explicitly
+            if tag == 'supporting_sentences':
+                for sentence_element in element.findall('sentence'):
+                    if sentence_element.text:
+                         supporting_sentences_list.append(sentence_element.text.strip())
+                if supporting_sentences_list:
+                     # Store under a key that matches the check function's expectation
+                     result['supporting_sentences'] = {'sentence': supporting_sentences_list}
+            elif tag == 'sub-questions':
+                 for sub_q_element in element.findall('sub-question'):
+                    sub_q_data = {}
+                    desc_element = sub_q_element.find('description')
+                    ans_element = sub_q_element.find('answer')
+                    dep_element = sub_q_element.find('depend')
+
+                    sub_q_data['description'] = desc_element.text.strip() if desc_element is not None and desc_element.text is not None else ""
+
+                    if ans_element is not None and ans_element.text is not None:
+                        ans_text = ans_element.text.strip()
+                        try:
+                            if '.' in ans_text:
+                                sub_q_data['answer'] = float(ans_text)
+                            elif ans_text.isdigit() or (ans_text.startswith('-') and ans_text[1:].isdigit()):
+                                sub_q_data['answer'] = int(ans_text)
+                            else: # Handle non-numeric answers like 'Yes', 'No', lists etc.
+                                sub_q_data['answer'] = ans_text
+                        except ValueError:
+                            sub_q_data['answer'] = ans_text # Keep as string on error
+                    else:
+                        sub_q_data['answer'] = None # Default None
+
+                    dependencies = []
+                    if dep_element is not None:
+                        for index_element in dep_element.findall('index'):
+                            if index_element.text is not None:
+                                try:
+                                    dependencies.append(int(index_element.text.strip()))
+                                except ValueError:
+                                    logger.warning(f"Non-integer dependency index found: {index_element.text.strip()}")
+                                    pass
+                    sub_q_data['depend'] = dependencies
+                    sub_questions_list.append(sub_q_data)
+                 if sub_questions_list:
+                     result['sub-questions'] = sub_questions_list
+            # Handle other simple tags (like question, thought, answer, conclusion)
             else:
-                logger.warning("Found <answer> tag but it has no text content (text is None).")
-                result['answer'] = None # Set to None if tag exists but has no text
-        else:
-            logger.warning("Could not find <answer> tag in the XML.")
-            result['answer'] = None # Set to None if tag is not found
+                result[tag] = value
 
-        # Find sub-questions
-        sub_questions_element = root.find('.//sub-questions') # Use .// for recursive search
-        if sub_questions_element is not None:
-            for sub_q_element in sub_questions_element.findall('sub-question'):
-                sub_q_data = {}
-                desc_element = sub_q_element.find('description')
-                ans_element = sub_q_element.find('answer')
-                dep_element = sub_q_element.find('depend')
-
-                if desc_element is not None and desc_element.text is not None:
-                    sub_q_data['description'] = desc_element.text.strip()
-                else:
-                     sub_q_data['description'] = "" # Default empty string
-
-                if ans_element is not None and ans_element.text is not None:
-                    ans_text = ans_element.text.strip()
-                    try:
-                        if '.' in ans_text:
-                            sub_q_data['answer'] = float(ans_text)
-                        elif ans_text.isdigit() or (ans_text.startswith('-') and ans_text[1:].isdigit()):
-                             sub_q_data['answer'] = int(ans_text)
-                        else: # Handle non-numeric answers like 'Yes', 'No', lists etc.
-                             sub_q_data['answer'] = ans_text
-                    except ValueError:
-                        sub_q_data['answer'] = ans_text # Keep as string on error
-                else:
-                     sub_q_data['answer'] = None # Default None
-
-                dependencies = []
-                if dep_element is not None:
-                    for index_element in dep_element.findall('index'):
-                        if index_element.text is not None:
-                            try:
-                                dependencies.append(int(index_element.text.strip()))
-                            except ValueError:
-                                logger.warning(f"Non-integer dependency index found: {index_element.text.strip()}")
-                                # Decide how to handle: skip, add as string, etc. Skipping for now.
-                                pass
-                sub_q_data['depend'] = dependencies
-                sub_questions_list.append(sub_q_data)
-
-        # Add the collected sub-questions if any were found
-        if sub_questions_list:
-            result['sub-questions'] = sub_questions_list
-        # Handle case where sub-questions might be missing but answer is present
-        elif 'answer' not in result:
-             # If neither answer nor sub-questions found, return empty or signal error
-             logger.warning("XML structure seems invalid or missing expected tags 'answer' and 'sub-questions'.")
+        # Final check if essential keys are missing after parsing all children
+        if not result:
+             logger.warning("XML parsing resulted in an empty dictionary. Check XML structure and tags.")
              return {}
-
 
         logger.debug(f"Successfully extracted XML: {str(result)[:500]}...") # Log success (truncated)
         return result
